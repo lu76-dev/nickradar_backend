@@ -1,0 +1,1724 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+const cron = require('node-cron');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) { console.error('FATAL: JWT_SECRET not set'); process.exit(1); }
+
+const ADMIN_KEY = process.env.ADMIN_KEY;
+if (!ADMIN_KEY) { console.error('FATAL: ADMIN_KEY not set'); process.exit(1); }
+
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: parseInt(process.env.EMAIL_PORT || '465'),
+  secure: true,
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+});
+
+async function sendEmail(to, subject, text) {
+  try {
+    await transporter.sendMail({
+      from: `"nickradar" <${process.env.EMAIL_USER}>`,
+      to, subject, text
+    });
+  } catch (err) {
+    console.error('Email error:', err.message);
+  }
+}
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 20,
+  message: { success: false, error: 'too many attempts, try again in 15 minutes' },
+  standardHeaders: true, legacyHeaders: false,
+});
+
+const codeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30,
+  message: { success: false, error: 'too many attempts, try again in 15 minutes' },
+  standardHeaders: true, legacyHeaders: false,
+});
+
+function requireAdminKey(req, res, next) {
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== ADMIN_KEY) return res.status(403).json({ success: false, error: 'forbidden' });
+  next();
+}
+
+function requireEventAdminAuth(req, res, next) {
+  const auth = req.headers['authorization'];
+  const queryToken = req.query.token;
+  const tokenStr = auth ? auth.slice(7) : queryToken;
+  if (!tokenStr) return res.status(401).json({ success: false, error: 'unauthorized' });
+  try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+    req.adminId = decoded.id;
+    next();
+  } catch {
+    return res.status(401).json({ success: false, error: 'invalid token' });
+  }
+}
+
+async function requireParticipantSession(req, res, next) {
+  const token = req.headers['x-session-token'];
+  if (!token) return res.status(401).json({ success: false, error: 'no session' });
+  try {
+    const result = await pool.query(
+      `SELECT s.*, st.nickname, st.event_id, st.id as sticker_id, e.ends_at, e.status as event_status
+       FROM session s
+       JOIN sticker st ON s.sticker_id = st.id
+       JOIN event e ON s.event_id = e.id
+       WHERE s.token = $1 AND s.expires_at > NOW()`,
+      [token]
+    );
+    if (result.rows.length === 0) return res.status(401).json({ success: false, error: 'session expired' });
+    const s = result.rows[0];
+    if (s.event_status === 'stopped' || s.event_status === 'finished') {
+      return res.status(401).json({ success: false, error: 'event ended' });
+    }
+    req.session = s;
+    await pool.query('UPDATE session SET last_seen_at = NOW() WHERE token = $1', [token]);
+    next();
+  } catch (err) {
+    console.error('Session check error:', err);
+    return res.status(500).json({ success: false, error: 'server error' });
+  }
+}
+
+app.use(cors({
+  origin: [
+    'https://nickradar.com', 'https://www.nickradar.com',
+    'https://app.nickradar.com', 'https://events.nickradar.com',
+    'https://admin.nickradar.com'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-key', 'x-session-token'],
+}));
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '5mb' }));
+
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+});
+
+pool.connect((err, client, release) => {
+  if (err) { console.error('DB connection error:', err.stack); }
+  else { console.log('Connected to PostgreSQL'); release(); }
+});
+
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0].trim()
+    || req.headers['x-real-ip']
+    || req.connection.remoteAddress
+    || 'unknown';
+}
+
+const NICKNAMES = [
+  'WOLF','HAWK','TITAN','REX','BLADE','STORM','IRON','HUNTER','FLEX','SPIKE',
+  'LUNA','IRIS','NOVA','JADE','STELLA','PEARL','AURORA','ROSE','IVY','SKYE',
+  'ECHO','PIXEL','GHOST','EMBER','RAVEN','FLUX','SPARK','CIPHER','DRIFT','VIBE',
+  'VIPER','LYNX','RIDGE','BLAZE','FLINT','RAZOR','DUSK','STEEL','FORGE','APEX',
+  'MIST','GLOW','VELVET','AMBER','SAGE','FERN','OPAL','REED','WREN','CORAL',
+  'NEXUS','GLITCH','BYTE','GRID','NODE','PULSE','VECTOR','SIGNAL','CORE','ORBIT',
+  'ZARA','LENA','NORA','SUKI','MIRA','TARA','LILA','EDEN','ARIA','ELSA',
+  'CROW','BEAR','FOX','OWL','KITE','IBIS','SWIFT','CRANE',
+  'HAZE','GALE','FROST','SLEET','MOOR','VALE','CREST','FORD','GLEN','HOLM',
+  'ACE','JOLT','RIOT','DASH','VOLT','GRIT','ZEAL','BOLT','RUSH','FURY',
+  'ONYX','SLATE','COAL','MICA','QUARTZ','BASALT','CHALK','SHALE','CLAY',
+  'MYTH','LORE','RUNE','OMEN','TOTEM','SIGIL','ORACLE','DRUID','SEER','SHADE',
+  'CHROME','COBALT','INDIGO','TEAL','AZURE','OCHRE','SIENNA','IVORY',
+  'ZERO','AXIOM','NULL','DELTA','OMEGA','SIGMA','THETA','KAPPA','LAMBDA','ZETA',
+  'BISON','DINGO','GECKO','JACKAL','LEMUR','MANTA','OSPREY','PANDA','QUOKKA','TAPIR',
+  'ALTO','BASS','CHORD','NOTE','TEMPO','PITCH','SCALE','TREBLE','BEAT','TUNE',
+  'ARCH','DOME','SPIRE','GABLE','LEDGE','NICHE','PORCH','VAULT','ALCOVE','TOWER',
+  'COLT','FAWN','FOAL','HARE','LAMB','WHELP','KITTEN','PONY','CHICK','FILLY',
+  'BROOK','CREEK','FALLS','GORGE','INLET','MARSH','MESA','SHOAL','STEPPE',
+  'BLINK','FLASH','FLARE','GLEAM','GLINT','SHIMMER','BEAM','SHINE'
+];
+
+function generateNicknames(count) {
+  const pool = [...NICKNAMES];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const result = [];
+  let i = 0;
+  while (result.length < count) {
+    result.push(pool[i % pool.length] + (i >= pool.length ? '_' + Math.floor(i / pool.length) : ''));
+    i++;
+  }
+  return result;
+}
+
+function generateCode() {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
+
+function localToUTC(localDateStr, timezone) {
+  const tempDate = new Date(localDateStr);
+  const utcStr = tempDate.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr = tempDate.toLocaleString('en-US', { timeZone: timezone });
+  const offset = new Date(tzStr) - new Date(utcStr);
+  return new Date(tempDate.getTime() - offset);
+}
+
+const TZ_ABBR = {
+  'Europe/Vienna':'CET/CEST','Europe/Berlin':'CET/CEST','Europe/London':'GMT/BST',
+  'Europe/Paris':'CET/CEST','Europe/Rome':'CET/CEST','Europe/Madrid':'CET/CEST',
+  'Europe/Amsterdam':'CET/CEST','Europe/Zurich':'CET/CEST','Europe/Warsaw':'CET/CEST',
+  'Europe/Stockholm':'CET/CEST','Europe/Helsinki':'EET/EEST','Europe/Athens':'EET/EEST',
+  'Europe/Lisbon':'WET/WEST','Europe/Moscow':'MSK','Europe/Istanbul':'TRT',
+  'America/New_York':'ET','America/Chicago':'CT','America/Denver':'MT',
+  'America/Los_Angeles':'PT','America/Toronto':'ET','America/Vancouver':'PT',
+  'America/Mexico_City':'CT','America/Sao_Paulo':'BRT','America/Buenos_Aires':'ART',
+  'America/Bogota':'COT','Asia/Dubai':'GST','Asia/Kolkata':'IST',
+  'Asia/Bangkok':'ICT','Asia/Singapore':'SGT','Asia/Shanghai':'CST',
+  'Asia/Tokyo':'JST','Asia/Seoul':'KST','Australia/Sydney':'AEST/AEDT',
+  'Pacific/Auckland':'NZST/NZDT','Africa/Cairo':'EET','Africa/Johannesburg':'SAST',
+  'Africa/Lagos':'WAT','Africa/Nairobi':'EAT'
+};
+
+function tzAbbr(tz) { return TZ_ABBR[tz] || tz; }
+
+async function getNextInvoiceNumber() {
+  const result = await pool.query(
+    "SELECT MAX(CAST(SUBSTRING(invoice_number FROM 4) AS INTEGER)) as max_num FROM invoice WHERE invoice_number LIKE 'EA-%'"
+  );
+  const n = (parseInt(result.rows[0].max_num) || 0) + 1;
+  return 'EA-' + String(n).padStart(8, '0');
+}
+
+function calcPrice(count) {
+  if (count >= 5000) return count * 0.40;
+  if (count >= 2000) return count * 0.50;
+  if (count >= 1000) return count * 0.60;
+  if (count >= 500)  return count * 0.70;
+  if (count >= 200)  return count * 0.80;
+  if (count >= 100)  return count * 0.90;
+  return count * 1.00;
+}
+
+function unitPrice(count) {
+  if (count >= 5000) return 0.40;
+  if (count >= 2000) return 0.50;
+  if (count >= 1000) return 0.60;
+  if (count >= 500)  return 0.70;
+  if (count >= 200)  return 0.80;
+  if (count >= 100)  return 0.90;
+  return 1.00;
+}
+
+async function generateUniqueCodes(eventId, count) {
+  const globalUsed = await pool.query(
+    `SELECT code FROM sticker s JOIN event e ON s.event_id = e.id
+     WHERE e.status IN ('active','pending') AND s.event_id != $1`,
+    [eventId]
+  );
+  const globalSet = new Set(globalUsed.rows.map(r => r.code));
+  const existing = await pool.query('SELECT code FROM sticker WHERE event_id = $1', [eventId]);
+  existing.rows.forEach(r => globalSet.add(r.code));
+  const unique = [];
+  let attempts = 0;
+  while (unique.length < count && attempts < 100000) {
+    attempts++;
+    const c = generateCode();
+    if (!globalSet.has(c)) { globalSet.add(c); unique.push(c); }
+  }
+  return unique;
+}
+
+async function bulkInsertStickers(eventId, nicknames, codes) {
+  const count = nicknames.length;
+  const eventIds = Array(count).fill(eventId);
+  const statuses = Array(count).fill('unused');
+  await pool.query(
+    `INSERT INTO sticker (event_id, nickname, code, status, created_at)
+     SELECT unnest($1::int[]), unnest($2::text[]), unnest($3::text[]), unnest($4::text[]), NOW()`,
+    [eventIds, nicknames, codes, statuses]
+  );
+}
+
+// ============================================================
+// EVENT ADMIN AUTH
+// ============================================================
+
+app.post('/api/event-admin/register', loginLimiter, async (req, res) => {
+  const { org_name, street, plz_city, country, vat, contact_name, phone, email, password } = req.body;
+  if (!org_name || !email || !password) {
+    return res.status(400).json({ success: false, error: 'organization, email and password are required' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ success: false, error: 'password must be at least 8 characters' });
+  }
+  const mail = email.trim().toLowerCase();
+  try {
+    const check = await pool.query('SELECT id FROM event_admin WHERE email = $1', [mail]);
+    if (check.rows.length > 0) return res.status(409).json({ success: false, error: 'email already registered' });
+    const hash = await bcrypt.hash(password, 10);
+    await pool.query(
+      `INSERT INTO event_admin (org_name, street, plz_city, country, vat, contact_name, phone, email, password_hash, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW())`,
+      [org_name.trim(), street || null, plz_city || null, country || null, vat || null, contact_name || null, phone || null, mail, hash]
+    );
+    sendEmail(
+      process.env.EMAIL_USER,
+      'nickradar: New Event Admin Registration',
+      `New registration:\nOrg: ${org_name}\nEmail: ${mail}\n\nActivate at: https://admin.nickradar.com`
+    );
+    res.status(201).json({ success: true, message: 'registration received, pending activation' });
+  } catch (err) {
+    console.error('Event admin register error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/event-admin/login', loginLimiter, async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ success: false, error: 'email and password required' });
+  const mail = email.trim().toLowerCase();
+  try {
+    const result = await pool.query('SELECT * FROM event_admin WHERE email = $1', [mail]);
+    if (result.rows.length === 0) return res.status(401).json({ success: false, error: 'invalid credentials' });
+    const admin = result.rows[0];
+    if (admin.status === 'pending') return res.status(403).json({ success: false, error: 'account pending activation' });
+    if (admin.status === 'blocked') return res.status(403).json({ success: false, error: 'account blocked' });
+    const match = await bcrypt.compare(password, admin.password_hash);
+    if (!match) return res.status(401).json({ success: false, error: 'invalid credentials' });
+    await pool.query('UPDATE event_admin SET last_login_at = NOW() WHERE id = $1', [admin.id]);
+    const token = jwt.sign({ id: admin.id }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ success: true, token, admin: { id: admin.id, org_name: admin.org_name, contact_name: admin.contact_name, email: admin.email } });
+  } catch (err) {
+    console.error('Event admin login error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/event-admin/me', requireEventAdminAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, org_name, street, plz_city, country, vat, contact_name, phone, email, status, created_at FROM event_admin WHERE id = $1',
+      [req.adminId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    res.json({ success: true, admin: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.put('/api/event-admin/profile', requireEventAdminAuth, async (req, res) => {
+  const { org_name, street, plz_city, country, vat, contact_name, phone } = req.body;
+  if (!org_name) return res.status(400).json({ success: false, error: 'org_name required' });
+  try {
+    await pool.query(
+      'UPDATE event_admin SET org_name=$1, street=$2, plz_city=$3, country=$4, vat=$5, contact_name=$6, phone=$7 WHERE id=$8',
+      [org_name.trim(), street || null, plz_city || null, country || null, vat || null, contact_name || null, phone || null, req.adminId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Profile update error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.put('/api/event-admin/password', requireEventAdminAuth, async (req, res) => {
+  const { new_password, confirm_password } = req.body;
+  if (!new_password || !confirm_password) return res.status(400).json({ success: false, error: 'new_password and confirm_password required' });
+  if (new_password.length < 8) return res.status(400).json({ success: false, error: 'password min. 8 characters' });
+  if (new_password !== confirm_password) return res.status(400).json({ success: false, error: 'passwords do not match' });
+  try {
+    const hash = await bcrypt.hash(new_password, 10);
+    await pool.query('UPDATE event_admin SET password_hash = $1 WHERE id = $2', [hash, req.adminId]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Password change error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.delete('/api/event-admin/account', requireEventAdminAuth, async (req, res) => {
+  try {
+    await pool.query(
+      "UPDATE event_admin SET status='deleted', email=CONCAT(email,'_deleted_',id) WHERE id=$1",
+      [req.adminId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Account delete error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// EVENTS
+// ============================================================
+
+app.post('/api/events', requireEventAdminAuth, async (req, res) => {
+  const { event_name, org_name, start_at, sticker_count, timezone, security_name, security_phone } = req.body;
+  if (!event_name || !start_at || !sticker_count) {
+    return res.status(400).json({ success: false, error: 'event_name, start_at, sticker_count required' });
+  }
+  if (!security_name || !security_phone) {
+    return res.status(400).json({ success: false, error: 'security_name and security_phone required' });
+  }
+  const count = parseInt(sticker_count);
+  if (count < 24) return res.status(400).json({ success: false, error: 'minimum 24 stickers' });
+  if (count > 10000) return res.status(400).json({ success: false, error: 'maximum 10000 stickers' });
+
+  const tz = timezone || 'Europe/Vienna';
+
+  try {
+    const adminResult = await pool.query('SELECT * FROM event_admin WHERE id = $1', [req.adminId]);
+    if (adminResult.rows.length === 0) return res.status(404).json({ success: false, error: 'admin not found' });
+    const admin = adminResult.rows[0];
+
+    const startDate = localToUTC(start_at, tz);
+    const endsAt = new Date(startDate.getTime() + 8 * 60 * 60 * 1000);
+
+    const eventResult = await pool.query(
+      `INSERT INTO event (admin_id, event_name, org_name, start_at, ends_at, timezone, status, security_name, security_phone, security_confirmed, paid, sticker_count, activated_count, connection_count, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, FALSE, FALSE, $9, 0, 0, NOW()) RETURNING *`,
+      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, security_name.trim(), security_phone.trim(), count]
+    );
+    const event = eventResult.rows[0];
+
+    const nicknames = generateNicknames(count);
+    const codes = await generateUniqueCodes(event.id, count);
+
+    await bulkInsertStickers(event.id, nicknames, codes);
+
+    const up = unitPrice(count);
+    await pool.query(
+      `INSERT INTO sticker_package (event_id, quantity, unit_price, created_at) VALUES ($1, $2, $3, NOW())`,
+      [event.id, count, up]
+    );
+
+    res.status(201).json({ success: true, event });
+  } catch (err) {
+    console.error('Create event error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/events', requireEventAdminAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM event WHERE admin_id = $1 ORDER BY created_at DESC',
+      [req.adminId]
+    );
+    res.json({ success: true, events: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/events/invoices', requireEventAdminAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         MIN(i.invoice_number) as invoice_number,
+         i.event_id,
+         e.event_name,
+         SUM(i.quantity) as total_quantity,
+         SUM(i.total) as grand_total,
+         MIN(i.created_at) as created_at
+       FROM invoice i
+       JOIN event e ON i.event_id = e.id
+       WHERE i.admin_id = $1
+       GROUP BY i.event_id, e.event_name
+       ORDER BY MIN(i.created_at) DESC`,
+      [req.adminId]
+    );
+    res.json({ success: true, invoices: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/events/:id', requireEventAdminAuth, async (req, res) => {
+  try {
+    const event = await pool.query(
+      'SELECT * FROM event WHERE id = $1 AND admin_id = $2',
+      [req.params.id, req.adminId]
+    );
+    if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+
+    const stickers = await pool.query(
+      'SELECT * FROM sticker WHERE event_id = $1 ORDER BY id ASC',
+      [req.params.id]
+    );
+
+    res.json({ success: true, event: event.rows[0], stickers: stickers.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/events/:id/connections', requireEventAdminAuth, async (req, res) => {
+  try {
+    const event = await pool.query(
+      'SELECT * FROM event WHERE id = $1 AND admin_id = $2',
+      [req.params.id, req.adminId]
+    );
+    if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+
+    const result = await pool.query(
+      `SELECT c.seeker_id, c.target_id, s1.nickname as seeker_nick, s2.nickname as target_nick
+       FROM chat c
+       JOIN sticker s1 ON c.seeker_id = s1.id
+       JOIN sticker s2 ON c.target_id = s2.id
+       WHERE c.event_id = $1 AND c.status = 'active'`,
+      [req.params.id]
+    );
+    res.json({ success: true, connections: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/events/:id/stop', requireEventAdminAuth, async (req, res) => {
+  try {
+    const event = await pool.query(
+      'SELECT * FROM event WHERE id = $1 AND admin_id = $2',
+      [req.params.id, req.adminId]
+    );
+    if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    await finishEvent(parseInt(req.params.id), 'event_admin');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/events/:id/stickers/add', requireEventAdminAuth, async (req, res) => {
+  const { quantity } = req.body;
+  const count = parseInt(quantity);
+  if (!count || count < 5) return res.status(400).json({ success: false, error: 'minimum 5 stickers' });
+
+  try {
+    const event = await pool.query(
+      'SELECT * FROM event WHERE id = $1 AND admin_id = $2',
+      [req.params.id, req.adminId]
+    );
+    if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+
+    const nicknames = generateNicknames(count);
+    const codes = await generateUniqueCodes(req.params.id, count);
+
+    await bulkInsertStickers(req.params.id, nicknames, codes);
+
+    await pool.query(
+      'UPDATE event SET sticker_count = sticker_count + $1 WHERE id = $2',
+      [count, req.params.id]
+    );
+
+    const up = unitPrice(count);
+    await pool.query(
+      `INSERT INTO sticker_package (event_id, quantity, unit_price, created_at) VALUES ($1, $2, $3, NOW())`,
+      [req.params.id, count, up]
+    );
+
+    res.json({ success: true, added: count });
+  } catch (err) {
+    console.error('Add stickers error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// STICKERS
+// ============================================================
+
+app.post('/api/stickers/:id/invalidate', requireEventAdminAuth, async (req, res) => {
+  try {
+    const sticker = await pool.query(
+      'SELECT s.* FROM sticker s JOIN event e ON s.event_id = e.id WHERE s.id = $1 AND e.admin_id = $2',
+      [req.params.id, req.adminId]
+    );
+    if (sticker.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    await pool.query(
+      "UPDATE sticker SET status = 'invalidated', invalidated_at = NOW(), invalidated_by = 'event_admin' WHERE id = $1",
+      [req.params.id]
+    );
+    await pool.query("UPDATE session SET expires_at = NOW() WHERE sticker_id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/events/:id/print', requireEventAdminAuth, async (req, res) => {
+  try {
+    const event = await pool.query(
+      'SELECT * FROM event WHERE id = $1 AND admin_id = $2',
+      [req.params.id, req.adminId]
+    );
+    if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    const e = event.rows[0];
+
+    const stickers = await pool.query(
+      'SELECT * FROM sticker WHERE event_id = $1 ORDER BY id ASC',
+      [req.params.id]
+    );
+
+    const tz = e.timezone || 'Europe/Vienna';
+    const startStr = new Date(e.start_at).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: tz });
+    const startTime = new Date(e.start_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const endTime = new Date(e.ends_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const dateTime = `${startStr} · ${startTime} – ${endTime}`;
+
+    const perPage = 24;
+    const total = stickers.rows.length;
+    const pages = Math.ceil(total / perPage);
+
+    let sheetsHtml = '';
+    for (let p = 0; p < pages; p++) {
+      const pageStickers = stickers.rows.slice(p * perPage, (p + 1) * perPage);
+      while (pageStickers.length < perPage) pageStickers.push(null);
+
+      let cells = '';
+      for (const s of pageStickers) {
+        if (s) {
+          cells += `
+            <div class="sticker">
+              <div class="nick">${s.nickname}</div>
+              <div class="code">${s.code}</div>
+              <div class="bottom">${dateTime}</div>
+              <div class="bottom">${e.org_name} · ${e.event_name}</div>
+              <div style="text-align:center;margin-top:2px;"><img class="sticker-logo" src="https://app.nickradar.com/nr_logo.png" alt="" /></div>
+              <div class="bottom" style="text-align:center;">nickradar.com</div>
+            </div>`;
+        } else {
+          cells += `<div class="sticker empty"></div>`;
+        }
+      }
+      sheetsHtml += `<div class="page">${cells}</div>`;
+    }
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>nickradar stickers — ${e.event_name}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#e0e0e0; font-family:'Courier New',monospace; }
+  .info { padding:12px 20px; font-size:12px; color:#555; }
+  .page { width:210mm; height:297mm; background:white; margin:20px auto; display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(8,1fr); }
+  .sticker { border-right:1px solid #999; border-bottom:1px solid #999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; padding:3mm; }
+  .sticker:nth-child(3n) { border-right:none; }
+  .sticker:nth-child(n+22) { border-bottom:none; }
+  .sticker.empty { background:#f9f9f9; }
+  .nick { font-size:40px; font-weight:900; letter-spacing:3px; color:#000; text-align:center; line-height:1; }
+  .code { font-size:14px; letter-spacing:3px; color:#00aa2a; font-weight:bold; }
+  .bottom { font-size:6px; letter-spacing:1px; color:#bbb; text-align:center; }
+  .sticker-logo { height:10px; width:auto; margin-top:2px; opacity:0.4; }
+  @media print { body{background:white;} .info{display:none;} .page{margin:0;box-shadow:none;} }
+</style>
+</head>
+<body>
+<div class="info">nickradar · ${e.event_name} · ${total} stickers · ${pages} page(s) · <a href="javascript:window.print()">Print</a></div>
+${sheetsHtml}
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('Print error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/events/:id/invoice', requireEventAdminAuth, async (req, res) => {
+  try {
+    const eventResult = await pool.query(
+      'SELECT * FROM event WHERE id = $1 AND admin_id = $2',
+      [req.params.id, req.adminId]
+    );
+    if (eventResult.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    const e = eventResult.rows[0];
+
+    const adminResult = await pool.query('SELECT * FROM event_admin WHERE id = $1', [req.adminId]);
+    const a = adminResult.rows[0];
+
+    const invoiceResult = await pool.query(
+      'SELECT * FROM invoice WHERE event_id = $1 AND admin_id = $2 ORDER BY created_at ASC',
+      [req.params.id, req.adminId]
+    );
+    if (invoiceResult.rows.length === 0) return res.status(404).json({ success: false, error: 'no invoice found' });
+    const inv = invoiceResult.rows[0];
+
+    const packagesResult = await pool.query(
+      'SELECT * FROM sticker_package WHERE event_id = $1 ORDER BY created_at ASC',
+      [req.params.id]
+    );
+    const packages = packagesResult.rows;
+
+    const tz = e.timezone || 'Europe/Vienna';
+    const tzLabel = tzAbbr(tz);
+    const startDateStr = new Date(e.start_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const startTime = new Date(e.start_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const endDateStr = new Date(e.ends_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const endTime = new Date(e.ends_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const invoiceDate = new Date(inv.created_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const durationMs = e.stopped_at
+      ? new Date(e.stopped_at) - new Date(e.start_at)
+      : new Date(e.ends_at) - new Date(e.start_at);
+    const durationH = Math.floor(durationMs / 3600000);
+    const durationM = Math.floor((durationMs % 3600000) / 60000);
+    const durationS = Math.floor((durationMs % 60000) / 1000);
+    const durationStr = String(durationH).padStart(2, '0') + ':' + String(durationM).padStart(2, '0') + ':' + String(durationS).padStart(2, '0');
+    const stoppedByMap = { time_expired: 'Time expired', event_admin: 'Event Admin', nickradar_admin: 'nickradar Admin' };
+    const stoppedAtStr = e.stopped_at
+      ? new Date(e.stopped_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz })
+        + ' ' + new Date(e.stopped_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz }) + ' Uhr'
+      : '';
+    const stoppedByStr = (stoppedByMap[e.stopped_by] || '—') + (stoppedAtStr ? ' &nbsp;·&nbsp; ' + stoppedAtStr : '');
+
+    const paymentStatus = inv.paid_at
+      ? `<span style="color:green;font-weight:bold;">✓ Bezahlt / Paid &nbsp;·&nbsp; Stripe &nbsp;·&nbsp; Kreditkarte${inv.payment_id ? ' ···· ' + inv.payment_id.slice(-4) : ''} &nbsp;·&nbsp; ${new Date(inv.paid_at).toLocaleDateString('de-AT')}</span>`
+      : `<span style="color:#cc6600;font-weight:bold;">⏳ Ausstehend / Pending &nbsp;·&nbsp; Stripe-Integration in Bearbeitung</span>`;
+
+    let grandTotal = 0;
+    let posRows = '';
+    packages.forEach(function(p, i) {
+      const qty = p.quantity;
+      const lineTotal = calcPrice(qty);
+      const up = lineTotal / qty;
+      grandTotal += lineTotal;
+      const pkgDate = new Date(p.created_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+      const pkgTime = new Date(p.created_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+      const desc = i === 0
+        ? 'Nickname Sticker Package &nbsp;·&nbsp; Initial Order'
+        : 'Nickname Sticker Package &nbsp;·&nbsp; Additional Order';
+      posRows += `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${desc}<br><small style="color:#999;">${e.event_name} &nbsp;·&nbsp; ${pkgDate} ${pkgTime} (${tzLabel})</small></td>
+          <td style="text-align:right;">${qty}</td>
+          <td style="text-align:right;">€${up.toFixed(2)}</td>
+          <td style="text-align:right;font-weight:bold;">€${lineTotal.toFixed(2)}</td>
+        </tr>`;
+    });
+
+    const html = `<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Rechnung / Invoice ${inv.invoice_number}</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Share Tech Mono', 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; padding: 20mm; max-width: 210mm; margin: 0 auto; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12mm; }
+  .logo-wrap { display: flex; align-items: center; gap: 10px; }
+  .logo-img { height: 38px; width: auto; }
+  .logo-text { font-size: 22px; font-weight: bold; letter-spacing: 4px; }
+  .sender-info { font-size: 10px; color: #999; margin-top: 8px; line-height: 1.8; }
+  .invoice-meta { text-align: right; font-size: 11px; line-height: 1.8; }
+  .inv-title { font-size: 18px; font-weight: bold; letter-spacing: 3px; margin-bottom: 2px; }
+  .inv-sub { font-size: 10px; color: #999; letter-spacing: 2px; margin-bottom: 8px; }
+  .addresses { margin-bottom: 10mm; }
+  .address-block { font-size: 11px; line-height: 1.8; }
+  .label { font-size: 9px; letter-spacing: 2px; color: #999; text-transform: uppercase; margin-bottom: 4px; }
+  .event-info { background: #f5f5f5; padding: 8px 12px; margin-bottom: 8mm; font-size: 11px; line-height: 1.8; border-left: 3px solid #000; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 8mm; }
+  thead tr { background: #000; color: #fff; }
+  th { padding: 7px 10px; text-align: left; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+  th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }
+  td { padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; font-size: 11px; }
+  td small { font-size: 10px; }
+  .total-box { display: flex; justify-content: flex-end; margin-bottom: 8mm; }
+  .total-table { width: 220px; }
+  .total-table td { padding: 4px 10px; border: none; font-size: 11px; }
+  .total-table .grand { font-weight: bold; font-size: 14px; border-top: 2px solid #000; padding-top: 8px; }
+  .payment-box { border: 1px solid #eee; padding: 10px 14px; margin-bottom: 8mm; font-size: 11px; line-height: 1.8; }
+  .footer { border-top: 1px solid #eee; padding-top: 6mm; font-size: 10px; color: #999; line-height: 1.7; }
+  .print-btn { position: fixed; top: 16px; right: 16px; background: #000; color: #fff; border: none; padding: 8px 20px; font-family: inherit; font-size: 11px; cursor: pointer; letter-spacing: 2px; }
+  @media print { .print-btn { display: none; } body { padding: 15mm; } }
+</style>
+</head>
+<body>
+<button class="print-btn" onclick="window.print()">Drucken / Print</button>
+
+<div class="header">
+  <div>
+    <div class="logo-wrap">
+      <img class="logo-img" src="https://app.nickradar.com/nr_logo.png" alt="nickradar" />
+      <span class="logo-text">nickradar</span>
+    </div>
+    <div class="sender-info">
+      Luigi La Macchia<br>
+      Badhausstrasse 3<br>
+      6080 Innsbruck-Igls &nbsp;·&nbsp; Austria<br>
+      info@nickradar.com &nbsp;·&nbsp; nickradar.com
+    </div>
+  </div>
+  <div class="invoice-meta">
+    <div class="inv-title">RECHNUNG</div>
+    <div class="inv-sub">INVOICE</div>
+    <div style="font-weight:bold;letter-spacing:2px;">${inv.invoice_number}</div>
+    <div style="margin-top:6px;color:#999;">Datum / Date: ${invoiceDate}</div>
+  </div>
+</div>
+
+<div class="addresses">
+  <div class="address-block">
+    <div class="label">Rechnungsempfänger / Bill To</div>
+    <strong>${a.org_name || ''}</strong><br>
+    ${a.street ? a.street + '<br>' : ''}
+    ${a.plz_city ? a.plz_city + '<br>' : ''}
+    ${a.country ? a.country + '<br>' : ''}
+    ${a.vat ? 'UID / VAT: ' + a.vat : ''}
+  </div>
+</div>
+
+<div class="event-info">
+  <div class="label">Event</div>
+  <strong>${e.event_name}</strong><br>
+  From: ${startDateStr} ${startTime} – To: ${endDateStr} ${endTime} &nbsp;·&nbsp; Timezone: ${tzLabel}<br>
+  Ended by: ${stoppedByStr} &nbsp;·&nbsp; Effective Event Duration: ${durationStr}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:30px;">Pos.</th>
+      <th>Beschreibung / Description</th>
+      <th style="width:60px;">Menge / Qty</th>
+      <th style="width:90px;">Preis/Stk / Unit</th>
+      <th style="width:90px;">Gesamt / Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${posRows}
+  </tbody>
+</table>
+
+<div class="total-box">
+  <table class="total-table">
+    <tr><td>Zwischensumme / Subtotal</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr>
+    <tr><td style="font-size:10px;color:#999;">MwSt. / VAT (0%)*</td><td style="text-align:right;font-size:10px;color:#999;">€0.00</td></tr>
+    <tr class="grand"><td>Gesamtbetrag / Total</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr>
+  </table>
+</div>
+
+<div class="payment-box">
+  <div class="label">Zahlungsinformation / Payment Info</div>
+  ${paymentStatus}
+</div>
+
+<div class="footer">
+  * Gemäß §6 Abs. 1 Z 27 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).<br>
+  &nbsp;&nbsp;In accordance with §6 para. 1 no. 27 Austrian VAT Act, no VAT is charged (small business regulation).<br><br>
+  Bei Fragen / Questions: info@nickradar.com &nbsp;·&nbsp; nickradar.com
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('Invoice error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// PARTICIPANT
+// ============================================================
+
+app.post('/api/participant/login', codeLimiter, async (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ success: false, error: 'code required' });
+  const ip = getClientIP(req);
+
+  try {
+    const stickerResult = await pool.query(
+      `SELECT s.*, e.event_name, e.org_name, e.start_at, e.ends_at, e.status as event_status, e.id as eid, e.paid, e.security_confirmed
+       FROM sticker s JOIN event e ON s.event_id = e.id
+       WHERE s.code = $1
+       ORDER BY CASE e.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, e.start_at DESC
+       LIMIT 1`,
+      [code.trim()]
+    );
+
+    if (stickerResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'invalid code' });
+    }
+
+    const sticker = stickerResult.rows[0];
+
+    if (sticker.event_status === 'stopped' || sticker.event_status === 'finished') {
+      return res.status(403).json({ success: false, error: 'event has ended' });
+    }
+
+    if (new Date(sticker.ends_at) < new Date()) {
+      return res.status(403).json({ success: false, error: 'event has ended' });
+    }
+
+    if (!sticker.security_confirmed || !sticker.paid) {
+      return res.status(403).json({ success: false, error: 'event not ready yet' });
+    }
+
+    if (sticker.status === 'invalidated') {
+      return res.status(403).json({ success: false, error: 'sticker invalidated, please get a new one' });
+    }
+
+    if (sticker.status === 'blocked') {
+      return res.status(403).json({ success: false, error: 'sticker blocked' });
+    }
+
+    const existingSession = await pool.query(
+      'SELECT * FROM session WHERE sticker_id = $1 AND expires_at > NOW()',
+      [sticker.id]
+    );
+
+    let token;
+    if (existingSession.rows.length > 0) {
+      token = existingSession.rows[0].token;
+      await pool.query('UPDATE session SET last_seen_at = NOW() WHERE token = $1', [token]);
+    } else {
+      token = crypto.randomBytes(32).toString('hex');
+      await pool.query(
+        `INSERT INTO session (sticker_id, event_id, token, created_at, expires_at, last_seen_at, ip_address)
+         VALUES ($1, $2, $3, NOW(), $4, NOW(), $5)`,
+        [sticker.id, sticker.eid, token, sticker.ends_at, ip]
+      );
+      if (sticker.status === 'unused') {
+        await pool.query(
+          "UPDATE sticker SET status = 'active', activated_at = NOW() WHERE id = $1",
+          [sticker.id]
+        );
+        await pool.query(
+          'UPDATE event SET activated_count = activated_count + 1 WHERE id = $1',
+          [sticker.eid]
+        );
+      }
+    }
+
+    if (sticker.event_status === 'pending') {
+      await pool.query("UPDATE event SET status = 'active' WHERE id = $1", [sticker.eid]);
+    }
+
+    const profile = await pool.query('SELECT * FROM profile WHERE sticker_id = $1', [sticker.id]);
+
+    res.json({
+      success: true,
+      token,
+      participant: {
+        nickname: sticker.nickname,
+        sticker_id: sticker.id,
+        event_id: sticker.eid,
+        event_name: sticker.event_name,
+        org_name: sticker.org_name,
+        ends_at: sticker.ends_at,
+        photo_url: profile.rows[0]?.photo_url || null,
+        slogan: profile.rows[0]?.slogan || null,
+      }
+    });
+  } catch (err) {
+    console.error('Participant login error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/participant/me', requireParticipantSession, async (req, res) => {
+  try {
+    const profile = await pool.query('SELECT * FROM profile WHERE sticker_id = $1', [req.session.sticker_id]);
+    res.json({
+      success: true,
+      participant: {
+        nickname: req.session.nickname,
+        sticker_id: req.session.sticker_id,
+        event_id: req.session.event_id,
+        event_name: req.session.event_name,
+        ends_at: req.session.ends_at,
+        photo_url: profile.rows[0]?.photo_url || null,
+        slogan: profile.rows[0]?.slogan || null,
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// PROFILE
+// ============================================================
+
+app.put('/api/participant/profile', requireParticipantSession, async (req, res) => {
+  const { photo_url, slogan } = req.body;
+  if (slogan && slogan.length > 100) return res.status(400).json({ success: false, error: 'slogan max 100 chars' });
+  try {
+    const existing = await pool.query('SELECT id FROM profile WHERE sticker_id = $1', [req.session.sticker_id]);
+    if (existing.rows.length > 0) {
+      await pool.query(
+        'UPDATE profile SET photo_url = COALESCE($1, photo_url), slogan = COALESCE($2, slogan), updated_at = NOW() WHERE sticker_id = $3',
+        [photo_url || null, slogan || null, req.session.sticker_id]
+      );
+    } else {
+      await pool.query(
+        'INSERT INTO profile (sticker_id, photo_url, slogan, updated_at) VALUES ($1, $2, $3, NOW())',
+        [req.session.sticker_id, photo_url || null, slogan || null]
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// SEARCH
+// ============================================================
+
+app.get('/api/search', requireParticipantSession, async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.length < 1) return res.json({ success: true, participants: [] });
+
+  try {
+    const result = await pool.query(
+      `SELECT s.id as sticker_id, s.nickname, p.photo_url, p.slogan
+       FROM sticker s
+       LEFT JOIN profile p ON p.sticker_id = s.id
+       WHERE s.event_id = $1
+         AND s.status = 'active'
+         AND s.id != $2
+         AND UPPER(s.nickname) LIKE UPPER($3)
+       ORDER BY s.nickname ASC
+       LIMIT 10`,
+      [req.session.event_id, req.session.sticker_id, q + '%']
+    );
+    res.json({ success: true, participants: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/participants/:nickname', requireParticipantSession, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT s.id as sticker_id, s.nickname, p.photo_url, p.slogan
+       FROM sticker s
+       LEFT JOIN profile p ON p.sticker_id = s.id
+       WHERE s.event_id = $1 AND UPPER(s.nickname) = UPPER($2) AND s.status = 'active' AND s.id != $3`,
+      [req.session.event_id, req.params.nickname, req.session.sticker_id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'participant not found' });
+    res.json({ success: true, participant: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// REQUESTS
+// ============================================================
+
+app.post('/api/requests', requireParticipantSession, async (req, res) => {
+  const { target_nickname, message } = req.body;
+  if (!target_nickname || !message) return res.status(400).json({ success: false, error: 'target_nickname and message required' });
+  if (message.length < 2 || message.length > 200) return res.status(400).json({ success: false, error: 'message must be 2-200 chars' });
+
+  try {
+    const target = await pool.query(
+      "SELECT id FROM sticker WHERE UPPER(nickname) = UPPER($1) AND event_id = $2 AND status = 'active'",
+      [target_nickname, req.session.event_id]
+    );
+    if (target.rows.length === 0) return res.status(404).json({ success: false, error: 'participant not found' });
+    const targetId = target.rows[0].id;
+
+    if (targetId === req.session.sticker_id) return res.status(400).json({ success: false, error: 'cannot send request to yourself' });
+
+    const blockCheck = await pool.query(
+      `SELECT id FROM request WHERE event_id = $1
+       AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2))
+       AND status = 'no'`,
+      [req.session.event_id, req.session.sticker_id, targetId]
+    );
+    if (blockCheck.rows.length > 0) return res.status(403).json({ success: false, error: 'blocked' });
+
+    const existing = await pool.query(
+      "SELECT id FROM request WHERE seeker_id = $1 AND target_id = $2 AND event_id = $3 AND status = 'pending'",
+      [req.session.sticker_id, targetId, req.session.event_id]
+    );
+    if (existing.rows.length > 0) return res.status(409).json({ success: false, error: 'request already pending' });
+
+    const chatCheck = await pool.query(
+      `SELECT id FROM chat WHERE event_id = $1
+       AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2))
+       AND status = 'active'`,
+      [req.session.event_id, req.session.sticker_id, targetId]
+    );
+    if (chatCheck.rows.length > 0) return res.status(409).json({ success: false, error: 'already in active chat' });
+
+    const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [req.session.event_id]);
+    const expiresAt = event.rows[0].ends_at;
+
+    const result = await pool.query(
+      `INSERT INTO request (seeker_id, target_id, event_id, message, sent_at, expires_at, status)
+       VALUES ($1, $2, $3, $4, NOW(), $5, 'pending') RETURNING *`,
+      [req.session.sticker_id, targetId, req.session.event_id, message, expiresAt]
+    );
+    res.status(201).json({ success: true, request: result.rows[0] });
+  } catch (err) {
+    console.error('Request error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.put('/api/requests/:id', requireParticipantSession, async (req, res) => {
+  const { answer } = req.body;
+  if (!['yes', 'no'].includes(answer)) return res.status(400).json({ success: false, error: 'answer must be yes or no' });
+
+  try {
+    const request = await pool.query(
+      "SELECT * FROM request WHERE id = $1 AND target_id = $2 AND status = 'pending'",
+      [req.params.id, req.session.sticker_id]
+    );
+    if (request.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    const r = request.rows[0];
+
+    await pool.query(
+      'UPDATE request SET status = $1, responded_at = NOW() WHERE id = $2',
+      [answer, r.id]
+    );
+
+    if (answer === 'yes') {
+      const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [r.event_id]);
+      const chat = await pool.query(
+        `INSERT INTO chat (request_id, event_id, seeker_id, target_id, started_at, ends_at, status)
+         VALUES ($1, $2, $3, $4, NOW(), $5, 'active') RETURNING *`,
+        [r.id, r.event_id, r.seeker_id, r.target_id, event.rows[0].ends_at]
+      );
+      await pool.query('UPDATE event SET connection_count = connection_count + 1 WHERE id = $1', [r.event_id]);
+      return res.json({ success: true, chat: chat.rows[0] });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Answer request error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/requests/incoming', requireParticipantSession, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.*, s.nickname as seeker_nickname, p.photo_url, p.slogan
+       FROM request r
+       JOIN sticker s ON r.seeker_id = s.id
+       LEFT JOIN profile p ON p.sticker_id = s.id
+       WHERE r.target_id = $1 AND r.event_id = $2 AND r.status = 'pending' AND r.expires_at > NOW()
+       ORDER BY r.sent_at DESC`,
+      [req.session.sticker_id, req.session.event_id]
+    );
+    res.json({ success: true, requests: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/requests/outgoing', requireParticipantSession, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.*, s.nickname as target_nickname
+       FROM request r
+       JOIN sticker s ON r.target_id = s.id
+       WHERE r.seeker_id = $1 AND r.event_id = $2
+       ORDER BY r.sent_at DESC`,
+      [req.session.sticker_id, req.session.event_id]
+    );
+    res.json({ success: true, requests: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/requests/history', requireParticipantSession, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.*,
+        CASE WHEN r.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname
+       FROM request r
+       JOIN sticker s1 ON r.seeker_id = s1.id
+       JOIN sticker s2 ON r.target_id = s2.id
+       WHERE (r.seeker_id = $1 OR r.target_id = $1) AND r.event_id = $2
+         AND r.status IN ('yes', 'no', 'expired')
+       ORDER BY r.sent_at DESC`,
+      [req.session.sticker_id, req.session.event_id]
+    );
+    res.json({ success: true, history: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// CHATS + MESSAGES
+// ============================================================
+
+app.get('/api/chats', requireParticipantSession, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.*,
+        CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
+        CASE WHEN c.seeker_id = $1 THEN p2.photo_url ELSE p1.photo_url END as other_photo
+       FROM chat c
+       JOIN sticker s1 ON c.seeker_id = s1.id
+       JOIN sticker s2 ON c.target_id = s2.id
+       LEFT JOIN profile p1 ON p1.sticker_id = s1.id
+       LEFT JOIN profile p2 ON p2.sticker_id = s2.id
+       WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2 AND c.status = 'active'
+       ORDER BY c.started_at DESC`,
+      [req.session.sticker_id, req.session.event_id]
+    );
+    res.json({ success: true, chats: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/messages/:chatId', requireParticipantSession, async (req, res) => {
+  try {
+    const chat = await pool.query(
+      'SELECT * FROM chat WHERE id = $1 AND (seeker_id = $2 OR target_id = $2)',
+      [req.params.chatId, req.session.sticker_id]
+    );
+    if (chat.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+
+    const messages = await pool.query(
+      `SELECT m.*, s.nickname as sender_nickname
+       FROM message m JOIN sticker s ON m.sender_id = s.id
+       WHERE m.chat_id = $1 ORDER BY m.sent_at ASC`,
+      [req.params.chatId]
+    );
+    res.json({ success: true, messages: messages.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/messages', requireParticipantSession, async (req, res) => {
+  const { chat_id, text } = req.body;
+  if (!chat_id || !text) return res.status(400).json({ success: false, error: 'chat_id and text required' });
+  if (text.length > 1000) return res.status(400).json({ success: false, error: 'message too long' });
+
+  try {
+    const chat = await pool.query(
+      "SELECT * FROM chat WHERE id = $1 AND (seeker_id = $2 OR target_id = $2) AND status = 'active'",
+      [chat_id, req.session.sticker_id]
+    );
+    if (chat.rows.length === 0) return res.status(404).json({ success: false, error: 'chat not found or not active' });
+
+    const result = await pool.query(
+      'INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW()) RETURNING *',
+      [chat_id, req.session.sticker_id, text]
+    );
+    res.status(201).json({ success: true, message: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.put('/api/chats/:id/block', requireParticipantSession, async (req, res) => {
+  try {
+    const chat = await pool.query(
+      "SELECT * FROM chat WHERE id = $1 AND (seeker_id = $2 OR target_id = $2) AND status = 'active'",
+      [req.params.id, req.session.sticker_id]
+    );
+    if (chat.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    await pool.query(
+      "UPDATE chat SET status = 'blocked', blocked_by = $1, blocked_at = NOW() WHERE id = $2",
+      [req.session.sticker_id, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// REPORTS
+// ============================================================
+
+app.post('/api/reports', requireParticipantSession, async (req, res) => {
+  const { reported_nickname, reason, details } = req.body;
+  if (!reported_nickname || !reason) return res.status(400).json({ success: false, error: 'reported_nickname and reason required' });
+
+  try {
+    const reported = await pool.query(
+      'SELECT s.id, s.nickname, e.admin_id FROM sticker s JOIN event e ON s.event_id = e.id WHERE UPPER(s.nickname) = UPPER($1) AND s.event_id = $2',
+      [reported_nickname, req.session.event_id]
+    );
+    if (reported.rows.length === 0) return res.status(404).json({ success: false, error: 'participant not found' });
+
+    await pool.query(
+      'INSERT INTO report (reporter_id, reported_id, event_id, reason, details, created_at) VALUES ($1, $2, $3, $4, $5, NOW())',
+      [req.session.sticker_id, reported.rows[0].id, req.session.event_id, reason, details || null]
+    );
+
+    const adminResult = await pool.query('SELECT email, org_name FROM event_admin WHERE id = $1', [reported.rows[0].admin_id]);
+    if (adminResult.rows.length > 0) {
+      const admin = adminResult.rows[0];
+      sendEmail(
+        admin.email,
+        'nickradar: Report received at your event',
+        `Hello ${admin.org_name},\n\nA report was submitted at your event.\n\nReported participant: ${reported.rows[0].nickname}\nReason: ${reason}\nDetails: ${details || '-'}\n\nPlease respond on-site.\n\nnickradar`
+      );
+    }
+
+    res.status(201).json({ success: true });
+  } catch (err) {
+    console.error('Report error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// NICKRADAR ADMIN
+// ============================================================
+
+app.get('/api/admin/event-admins', requireAdminKey, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, org_name, contact_name, email, status, created_at, last_login_at FROM event_admin ORDER BY created_at DESC'
+    );
+    res.json({ success: true, admins: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/event-admin/:id/activate', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query("UPDATE event_admin SET status = 'active' WHERE id = $1", [req.params.id]);
+    const admin = await pool.query('SELECT email, org_name FROM event_admin WHERE id = $1', [req.params.id]);
+    if (admin.rows.length > 0) {
+      const a = admin.rows[0];
+      sendEmail(
+        a.email,
+        'nickradar: Your account is now active',
+        `Hello ${a.org_name},\n\nYour nickradar Event Admin account has been activated.\n\nLogin at: https://events.nickradar.com\n\nnickradar`
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/event-admin/:id/block', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query("UPDATE event_admin SET status = 'blocked' WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/event-admin/:id/set-password', requireAdminKey, async (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 8) return res.status(400).json({ success: false, error: 'password min 8 chars' });
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    await pool.query('UPDATE event_admin SET password_hash = $1 WHERE id = $2', [hash, req.params.id]);
+    const admin = await pool.query('SELECT email, org_name FROM event_admin WHERE id = $1', [req.params.id]);
+    if (admin.rows.length > 0) {
+      sendEmail(
+        admin.rows[0].email,
+        'nickradar: Your password has been set',
+        `Hello ${admin.rows[0].org_name},\n\nYour password has been set by the nickradar team.\n\nNew password: ${password}\n\nLogin at: https://events.nickradar.com\n\nPlease change your password after login.\n\nnickradar`
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/events/:id/confirm-security', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query('UPDATE event SET security_confirmed = TRUE WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/events/:id/confirm-payment', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query('UPDATE event SET paid = TRUE WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/admin/events', requireAdminKey, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT e.*, ea.contact_name as admin_name, ea.org_name as admin_org, ea.email as admin_email
+       FROM event e JOIN event_admin ea ON e.admin_id = ea.id
+       ORDER BY e.created_at DESC`
+    );
+    res.json({ success: true, events: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/admin/events/:id/stickers', requireAdminKey, async (req, res) => {
+  try {
+    const stickers = await pool.query(
+      'SELECT * FROM sticker WHERE event_id = $1 ORDER BY id ASC',
+      [req.params.id]
+    );
+    res.json({ success: true, stickers: stickers.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/events/:id/stop', requireAdminKey, async (req, res) => {
+  try {
+    await finishEvent(parseInt(req.params.id), 'nickradar_admin');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.put('/api/admin/events/:id/duration', requireAdminKey, async (req, res) => {
+  const { ends_at } = req.body;
+  if (!ends_at) return res.status(400).json({ success: false, error: 'ends_at required' });
+  try {
+    await pool.query('UPDATE event SET ends_at = $1 WHERE id = $2', [new Date(ends_at), req.params.id]);
+    await pool.query('UPDATE session SET expires_at = $1 WHERE event_id = $2', [new Date(ends_at), req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/admin/invoices', requireAdminKey, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT i.*, ea.contact_name as admin_name, ea.org_name, e.event_name
+       FROM invoice i
+       JOIN event_admin ea ON i.admin_id = ea.id
+       LEFT JOIN event e ON i.event_id = e.id
+       ORDER BY i.created_at DESC`
+    );
+    res.json({ success: true, invoices: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/admin/reports', requireAdminKey, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.*,
+        s1.nickname as reporter_nickname,
+        s2.nickname as reported_nickname,
+        e.event_name
+       FROM report r
+       JOIN sticker s1 ON r.reporter_id = s1.id
+       JOIN sticker s2 ON r.reported_id = s2.id
+       JOIN event e ON r.event_id = e.id
+       ORDER BY r.created_at DESC`
+    );
+    res.json({ success: true, reports: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/stickers/:id/invalidate', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query(
+      "UPDATE sticker SET status = 'invalidated', invalidated_at = NOW(), invalidated_by = 'nickradar_admin' WHERE id = $1",
+      [req.params.id]
+    );
+    await pool.query("UPDATE session SET expires_at = NOW() WHERE sticker_id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+// ============================================================
+// HEALTH
+// ============================================================
+
+app.get('/', (req, res) => {
+  res.json({ message: 'nickradar API v6.0.0', status: 'running' });
+});
+
+// ============================================================
+// FINISH EVENT
+// ============================================================
+
+async function finishEvent(eid, stoppedBy) {
+  await pool.query(
+    "UPDATE event SET status = 'finished', stopped_at = NOW(), stopped_by = $1 WHERE id = $2",
+    [stoppedBy, eid]
+  );
+  await pool.query("UPDATE session SET expires_at = NOW() WHERE event_id = $1", [eid]);
+  await pool.query(
+    "UPDATE chat SET status = 'finished' WHERE event_id = $1 AND status = 'active'",
+    [eid]
+  );
+  await pool.query(
+    "DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE event_id = $1)",
+    [eid]
+  );
+
+  try {
+    const eventResult = await pool.query('SELECT * FROM event WHERE id = $1', [eid]);
+    if (eventResult.rows.length === 0) return;
+    const e = eventResult.rows[0];
+
+    const packages = await pool.query(
+      'SELECT * FROM sticker_package WHERE event_id = $1 ORDER BY created_at ASC',
+      [eid]
+    );
+    if (packages.rows.length === 0) return;
+
+    let grandTotal = 0;
+    let grandQty = 0;
+    packages.rows.forEach(function(p) {
+      const lineTotal = calcPrice(p.quantity);
+      grandTotal += lineTotal;
+      grandQty += p.quantity;
+    });
+
+    const invoiceNumber = await getNextInvoiceNumber();
+    const invoiceResult = await pool.query(
+      `INSERT INTO invoice (invoice_number, admin_id, event_id, quantity, unit_price, total, currency, payment_provider, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'EUR', 'stripe', NOW()) RETURNING *`,
+      [invoiceNumber, e.admin_id, eid, grandQty, (grandTotal / grandQty).toFixed(4), grandTotal.toFixed(2)]
+    );
+
+    await pool.query(
+      'UPDATE sticker_package SET invoice_id = $1 WHERE event_id = $2',
+      [invoiceResult.rows[0].id, eid]
+    );
+  } catch (err) {
+    console.error('[finishEvent] Invoice creation error:', err.message);
+  }
+}
+
+// ============================================================
+// CRON
+// ============================================================
+
+cron.schedule('* * * * *', async () => {
+  try {
+    await pool.query(
+      `UPDATE event SET status = 'active'
+       WHERE status = 'pending' AND start_at <= NOW()
+       AND security_confirmed = TRUE AND paid = TRUE`
+    );
+
+    const expired = await pool.query(
+      `SELECT id FROM event WHERE status = 'active' AND ends_at < NOW()`
+    );
+    for (const row of expired.rows) {
+      await finishEvent(row.id, 'time_expired');
+      console.log(`[CRON] Event ${row.id} finished by time_expired`);
+    }
+  } catch (err) {
+    console.error('[CRON] Error:', err.message);
+  }
+});
+
+// ============================================================
+// SERVER START + DB INIT
+// ============================================================
+
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`nickradar API v6.0.0 running on port ${PORT}`);
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS event_admin (
+        id SERIAL PRIMARY KEY,
+        org_name VARCHAR(100) NOT NULL,
+        street VARCHAR(150),
+        plz_city VARCHAR(100),
+        country VARCHAR(100),
+        vat VARCHAR(50),
+        contact_name VARCHAR(100),
+        phone VARCHAR(50),
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW(),
+        last_login_at TIMESTAMP
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS event (
+        id SERIAL PRIMARY KEY,
+        admin_id INTEGER REFERENCES event_admin(id),
+        org_name VARCHAR(100),
+        event_name VARCHAR(100) NOT NULL,
+        start_at TIMESTAMP NOT NULL,
+        ends_at TIMESTAMP NOT NULL,
+        timezone VARCHAR(50) DEFAULT 'Europe/Vienna',
+        status VARCHAR(20) DEFAULT 'pending',
+        stopped_at TIMESTAMP,
+        stopped_by VARCHAR(20),
+        security_name VARCHAR(100),
+        security_phone VARCHAR(50),
+        security_confirmed BOOLEAN DEFAULT FALSE,
+        paid BOOLEAN DEFAULT FALSE,
+        sticker_count INTEGER DEFAULT 0,
+        activated_count INTEGER DEFAULT 0,
+        connection_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sticker (
+        id SERIAL PRIMARY KEY,
+        event_id INTEGER REFERENCES event(id),
+        nickname VARCHAR(50) NOT NULL,
+        code VARCHAR(10) NOT NULL,
+        status VARCHAR(20) DEFAULT 'unused',
+        activated_at TIMESTAMP,
+        invalidated_at TIMESTAMP,
+        invalidated_by VARCHAR(50),
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(event_id, code)
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS session (
+        id SERIAL PRIMARY KEY,
+        sticker_id INTEGER REFERENCES sticker(id),
+        event_id INTEGER REFERENCES event(id),
+        token VARCHAR(64) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL,
+        last_seen_at TIMESTAMP,
+        ip_address VARCHAR(45)
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS profile (
+        id SERIAL PRIMARY KEY,
+        sticker_id INTEGER REFERENCES sticker(id) UNIQUE,
+        photo_url TEXT,
+        slogan VARCHAR(100),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS request (
+        id SERIAL PRIMARY KEY,
+        seeker_id INTEGER REFERENCES sticker(id),
+        target_id INTEGER REFERENCES sticker(id),
+        event_id INTEGER REFERENCES event(id),
+        message VARCHAR(200) NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW(),
+        expires_at TIMESTAMP,
+        status VARCHAR(20) DEFAULT 'pending',
+        responded_at TIMESTAMP
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS chat (
+        id SERIAL PRIMARY KEY,
+        request_id INTEGER REFERENCES request(id),
+        event_id INTEGER REFERENCES event(id),
+        seeker_id INTEGER REFERENCES sticker(id),
+        target_id INTEGER REFERENCES sticker(id),
+        started_at TIMESTAMP DEFAULT NOW(),
+        ends_at TIMESTAMP,
+        status VARCHAR(20) DEFAULT 'active',
+        blocked_by INTEGER REFERENCES sticker(id),
+        blocked_at TIMESTAMP
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS message (
+        id SERIAL PRIMARY KEY,
+        chat_id INTEGER REFERENCES chat(id),
+        sender_id INTEGER REFERENCES sticker(id),
+        text TEXT NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS report (
+        id SERIAL PRIMARY KEY,
+        reporter_id INTEGER REFERENCES sticker(id),
+        reported_id INTEGER REFERENCES sticker(id),
+        event_id INTEGER REFERENCES event(id),
+        reason VARCHAR(100) NOT NULL,
+        details TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        handled_by_admin BOOLEAN DEFAULT FALSE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS invoice (
+        id SERIAL PRIMARY KEY,
+        invoice_number VARCHAR(20) UNIQUE,
+        admin_id INTEGER REFERENCES event_admin(id),
+        event_id INTEGER REFERENCES event(id),
+        quantity INTEGER NOT NULL,
+        unit_price NUMERIC(10,4),
+        total NUMERIC(10,2),
+        currency VARCHAR(3) DEFAULT 'EUR',
+        payment_provider VARCHAR(50),
+        payment_id VARCHAR(255),
+        paid_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sticker_package (
+        id SERIAL PRIMARY KEY,
+        invoice_id INTEGER REFERENCES invoice(id),
+        event_id INTEGER REFERENCES event(id),
+        quantity INTEGER NOT NULL,
+        unit_price NUMERIC(10,4),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    console.log('DB schema v6.0.0 ready');
+  } catch (err) {
+    console.error('DB init error:', err.message);
+  }
+});
