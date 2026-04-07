@@ -1302,9 +1302,6 @@ app.listen(PORT, '0.0.0.0', async () => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS reports_contact_name VARCHAR(100)`);
-    await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS reports_contact_phone VARCHAR(50)`);
-    await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS reports_contact_confirmed BOOLEAN DEFAULT FALSE`);
     await pool.query(`
       DO $$
       BEGIN
@@ -1316,6 +1313,15 @@ app.listen(PORT, '0.0.0.0', async () => {
         END IF;
         IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='security_confirmed') THEN
           ALTER TABLE event RENAME COLUMN security_confirmed TO reports_contact_confirmed;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_name') THEN
+          ALTER TABLE event ADD COLUMN reports_contact_name VARCHAR(100);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_phone') THEN
+          ALTER TABLE event ADD COLUMN reports_contact_phone VARCHAR(50);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_confirmed') THEN
+          ALTER TABLE event ADD COLUMN reports_contact_confirmed BOOLEAN DEFAULT FALSE;
         END IF;
       END $$;
     `);
