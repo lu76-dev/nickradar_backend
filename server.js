@@ -707,7 +707,7 @@ app.get('/api/events/:id/invoice', requireEventAdminAuth, async (req, res) => {
     const durationS = Math.floor((durationMs % 60000) / 1000);
     const durationStr = String(durationH).padStart(2, '0') + ':' + String(durationM).padStart(2, '0') + ':' + String(durationS).padStart(2, '0');
     const stoppedByMap = { time_expired: 'Time expired', event_admin: 'Event Admin', nickradar_admin: 'nickradar Admin' };
-    const stoppedAtStr = e.stopped_at ? new Date(e.stopped_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' + new Date(e.stopped_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz }) + ' Uhr' : '';
+    const stoppedAtStr = e.stopped_at ? new Date(e.stopped_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' + new Date(e.stopped_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz }) : '';
     const stoppedByStr = (stoppedByMap[e.stopped_by] || '—') + (stoppedAtStr ? ' &nbsp;·&nbsp; ' + stoppedAtStr : '');
     const paymentStatus = inv.paid_at ? `<span style="color:green;font-weight:bold;">✓ Bezahlt / Paid &nbsp;·&nbsp; Stripe &nbsp;·&nbsp; Kreditkarte${inv.payment_id ? ' ···· ' + inv.payment_id.slice(-4) : ''} &nbsp;·&nbsp; ${new Date(inv.paid_at).toLocaleDateString('de-AT')}</span>` : `<span style="color:#cc6600;font-weight:bold;">⏳ Ausstehend / Pending &nbsp;·&nbsp; Stripe-Integration in Bearbeitung</span>`;
     let grandTotal = 0;
