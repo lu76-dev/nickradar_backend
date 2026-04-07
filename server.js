@@ -461,7 +461,7 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
     const admin = adminResult.rows[0];
 
     if (!admin.reports_contact_name || !admin.reports_contact_phone) {
-      return res.status(400).json({ success: false, error: 'please complete your account profile first — reports contact name and phone are required' });
+      return res.status(400).json({ success: false, error: 'please complete your account profile first -- reports contact name and phone are required' });
     }
 
     const startDate = localToUTC(start_at, tz);
@@ -487,79 +487,35 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
 
     const totalPrice = calcPrice(count).toFixed(2);
     const startFormatted = startDate.toISOString().replace('T', ' ').slice(0, 16) + ' ' + tzAbbr(tz);
-    sendEmail(
-      admin.email,
-      'nickradar — Event Order Confirmation',
-      'Hello ' + admin.org_name + ',
-
-Your event has been successfully created.
-
-EVENT DETAILS
-Event Name: ' + event_name.trim() + '
-Event ID: ' + formatEventId(event.id) + '
-Date & Start: ' + startFormatted + '
-Timezone: ' + tz + '
-Stickers ordered: ' + count + '
-Total amount: EUR ' + totalPrice + '
-
-PAYMENT
-Payment is due before the event can be activated. You will receive further instructions shortly.
-
-TERMS ACCEPTANCE
-You confirmed the following at ' + new Date(terms_accepted_at).toISOString() + ' (IP: ' + termsIp + '):
-- Reports Contact will be present on-site for the entire event duration
-- Terms & Conditions and Privacy Policy accepted
-- Non-refundable payment policy acknowledged
-Terms version: ' + termsVer + '
-
-This email serves as your order confirmation. Please keep it for your records.
-
-nickradar
-events.nickradar.com'
-    );
-
-    res.status(201).json({ success: true, event });
-  } catch (err) {
-    console.error('Create event error:', err);
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
-  }
-  const count = parseInt(sticker_count);
-  if (count < 24) return res.status(400).json({ success: false, error: 'minimum 24 stickers' });
-  if (count > 10000) return res.status(400).json({ success: false, error: 'maximum 10000 stickers' });
-
-  const tz = timezone || 'Europe/Vienna';
-
-  try {
-    const adminResult = await pool.query('SELECT * FROM event_admin WHERE id = $1', [req.adminId]);
-    if (adminResult.rows.length === 0) return res.status(404).json({ success: false, error: 'admin not found' });
-    const admin = adminResult.rows[0];
-
-    if (!admin.reports_contact_name || !admin.reports_contact_phone) {
-      return res.status(400).json({ success: false, error: 'please complete your account profile first — reports contact name and phone are required' });
-    }
-
-    const startDate = localToUTC(start_at, tz);
-    const endsAt = new Date(startDate.getTime() + 8 * 60 * 60 * 1000);
-
-    const eventResult = await pool.query(
-      `INSERT INTO event (admin_id, event_name, org_name, start_at, ends_at, timezone, status, reports_contact_name, reports_contact_phone, reports_contact_confirmed, paid, sticker_count, activated_count, connection_count, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, FALSE, FALSE, $9, 0, 0, NOW()) RETURNING *`,
-      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, admin.reports_contact_name, admin.reports_contact_phone, count]
-    );
-    const event = eventResult.rows[0];
-
-    const nicknames = generateNicknames(count);
-    const codes = await generateUniqueCodes(event.id, count);
-
-    await bulkInsertStickers(event.id, nicknames, codes);
-
-    const up = unitPrice(count);
-    await pool.query(
-      `INSERT INTO sticker_package (event_id, quantity, unit_price, created_at) VALUES ($1, $2, $3, NOW())`,
-      [event.id, count, up]
-    );
+    const emailLines = [
+      'Hello ' + admin.org_name + ',',
+      '',
+      'Your event has been successfully created.',
+      '',
+      'EVENT DETAILS',
+      'Event Name: ' + event_name.trim(),
+      'Event ID: ' + formatEventId(event.id),
+      'Date & Start: ' + startFormatted,
+      'Timezone: ' + tz,
+      'Stickers ordered: ' + count,
+      'Total amount: EUR ' + totalPrice,
+      '',
+      'PAYMENT',
+      'Payment is due before the event can be activated. You will receive further instructions shortly.',
+      '',
+      'TERMS ACCEPTANCE',
+      'You confirmed the following at ' + new Date(terms_accepted_at).toISOString() + ' (IP: ' + termsIp + '):',
+      '- Reports Contact will be present on-site for the entire event duration',
+      '- Terms & Conditions and Privacy Policy accepted',
+      '- Non-refundable payment policy acknowledged',
+      'Terms version: ' + termsVer,
+      '',
+      'This email serves as your order confirmation. Please keep it for your records.',
+      '',
+      'nickradar',
+      'events.nickradar.com'
+    ];
+    sendEmail(admin.email, 'nickradar - Event Order Confirmation', emailLines.join('\n'));
 
     res.status(201).json({ success: true, event });
   } catch (err) {
@@ -1495,7 +1451,6 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
-
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
     console.log('DB schema v6.4.12 ready');
   } catch (err) {
