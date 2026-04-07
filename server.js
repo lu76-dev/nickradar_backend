@@ -345,7 +345,7 @@ app.post('/api/event-admin/login', loginLimiter, async (req, res) => {
 app.get('/api/event-admin/me', requireEventAdminAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, org_name, contact_name, business_type, country, street, plz_city, vat, phone,
+      `SELECT id, org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, phone,
               reports_contact_name, reports_contact_phone, email, status, created_at
        FROM event_admin WHERE id = $1`,
       [req.adminId]
@@ -358,16 +358,18 @@ app.get('/api/event-admin/me', requireEventAdminAuth, async (req, res) => {
 });
 
 app.put('/api/event-admin/profile', requireEventAdminAuth, async (req, res) => {
-  const { street, plz_city, vat, phone } = req.body;
+  const { street, street_number, postal_code, city, vat, phone } = req.body;
   try {
-    const current = await pool.query('SELECT street, plz_city, vat, phone FROM event_admin WHERE id = $1', [req.adminId]);
+    const current = await pool.query('SELECT street, street_number, postal_code, city, vat, phone FROM event_admin WHERE id = $1', [req.adminId]);
     if (current.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
     const c = current.rows[0];
     await pool.query(
-      'UPDATE event_admin SET street=$1, plz_city=$2, vat=$3, phone=$4 WHERE id=$5',
+      'UPDATE event_admin SET street=$1, street_number=$2, postal_code=$3, city=$4, vat=$5, phone=$6 WHERE id=$7',
       [
         c.street || street || null,
-        c.plz_city || plz_city || null,
+        c.street_number || street_number || null,
+        c.postal_code || postal_code || null,
+        c.city || city || null,
         c.vat || vat || null,
         c.phone || phone || null,
         req.adminId
@@ -720,7 +722,7 @@ app.get('/api/events/:id/invoice', requireEventAdminAuth, async (req, res) => {
       const desc = i === 0 ? 'Nickname Sticker Package &nbsp;·&nbsp; Initial Order' : 'Nickname Sticker Package &nbsp;·&nbsp; Additional Order';
       posRows += `<tr><td>${i + 1}</td><td>${desc}<br><small style="color:#999;">${e.event_name} &nbsp;·&nbsp; ${pkgDate} ${pkgTime} (${tzLabel})</small></td><td style="text-align:right;">${qty}</td><td style="text-align:right;">€${up.toFixed(2)}</td><td style="text-align:right;font-weight:bold;">€${lineTotal.toFixed(2)}</td></tr>`;
     });
-    const html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>Rechnung / Invoice ${inv.invoice_number}</title><link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Share Tech Mono','Courier New',monospace;font-size:12px;color:#000;background:#fff;padding:20mm;max-width:210mm;margin:0 auto;}.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12mm;}.logo-wrap{display:flex;align-items:center;gap:10px;}.logo-img{height:38px;width:auto;}.logo-text{font-size:22px;font-weight:bold;letter-spacing:4px;}.sender-info{font-size:10px;color:#999;margin-top:8px;line-height:1.8;}.invoice-meta{text-align:right;font-size:11px;line-height:1.8;}.inv-title{font-size:18px;font-weight:bold;letter-spacing:3px;margin-bottom:2px;}.inv-sub{font-size:10px;color:#999;letter-spacing:2px;margin-bottom:8px;}.addresses{margin-bottom:10mm;}.address-block{font-size:11px;line-height:1.8;}.label{font-size:9px;letter-spacing:2px;color:#999;text-transform:uppercase;margin-bottom:4px;}.event-info{background:#f5f5f5;padding:8px 12px;margin-bottom:8mm;font-size:11px;line-height:1.8;border-left:3px solid #000;}table{width:100%;border-collapse:collapse;margin-bottom:8mm;}thead tr{background:#000;color:#fff;}th{padding:7px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;}th:nth-child(3),th:nth-child(4),th:nth-child(5){text-align:right;}td{padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;font-size:11px;}td small{font-size:10px;}.total-box{display:flex;justify-content:flex-end;margin-bottom:8mm;}.total-table{width:220px;}.total-table td{padding:4px 10px;border:none;font-size:11px;}.total-table .grand{font-weight:bold;font-size:14px;border-top:2px solid #000;padding-top:8px;}.payment-box{border:1px solid #eee;padding:10px 14px;margin-bottom:8mm;font-size:11px;line-height:1.8;}.footer{border-top:1px solid #eee;padding-top:6mm;font-size:10px;color:#999;line-height:1.7;}.print-btn{position:fixed;top:16px;right:16px;background:#000;color:#fff;border:none;padding:8px 20px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:2px;}@media print{.print-btn{display:none;}body{padding:15mm;}}</style></head><body><button class="print-btn" onclick="window.print()">Drucken / Print</button><div class="header"><div><div class="logo-wrap"><img class="logo-img" src="https://app.nickradar.com/nr_logo.png" alt="nickradar" /><span class="logo-text">nickradar</span></div><div class="sender-info">Luigi La Macchia<br>Badhausstrasse 3<br>6080 Innsbruck-Igls &nbsp;·&nbsp; Austria<br>info@nickradar.com &nbsp;·&nbsp; nickradar.com</div></div><div class="invoice-meta"><div class="inv-title">RECHNUNG</div><div class="inv-sub">INVOICE</div><div style="font-weight:bold;letter-spacing:2px;">${inv.invoice_number}</div><div style="margin-top:6px;color:#999;">Datum / Date: ${invoiceDate}</div></div></div><div class="addresses"><div class="address-block"><div class="label">Rechnungsempfänger / Bill To</div><strong>${a.org_name || ''}</strong><br>${a.street ? a.street + '<br>' : ''}${a.plz_city ? a.plz_city + '<br>' : ''}${a.country ? a.country + '<br>' : ''}${a.vat ? 'UID / VAT: ' + a.vat : ''}</div></div><div class="event-info"><div class="label">Event</div><strong>${e.event_name}</strong><br>From: ${startDateStr} ${startTime} – To: ${endDateStr} ${endTime} &nbsp;·&nbsp; Timezone: ${tzLabel}<br>Ended by: ${stoppedByStr} &nbsp;·&nbsp; Effective Event Duration: ${durationStr}</div><table><thead><tr><th style="width:30px;">Pos.</th><th>Beschreibung / Description</th><th style="width:60px;">Menge / Qty</th><th style="width:90px;">Preis/Stk / Unit</th><th style="width:90px;">Gesamt / Total</th></tr></thead><tbody>${posRows}</tbody></table><div class="total-box"><table class="total-table"><tr><td>Zwischensumme / Subtotal</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr><tr><td style="font-size:10px;color:#999;">MwSt. / VAT (0%)*</td><td style="text-align:right;font-size:10px;color:#999;">€0.00</td></tr><tr class="grand"><td>Gesamtbetrag / Total</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr></table></div><div class="payment-box"><div class="label">Zahlungsinformation / Payment Info</div>${paymentStatus}</div><div class="footer">* Gemäß §6 Abs. 1 Z 27 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).<br>&nbsp;&nbsp;In accordance with §6 para. 1 no. 27 Austrian VAT Act, no VAT is charged (small business regulation).<br><br>Bei Fragen / Questions: info@nickradar.com &nbsp;·&nbsp; nickradar.com</div></body></html>`;
+    const html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>Rechnung / Invoice ${inv.invoice_number}</title><link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Share Tech Mono','Courier New',monospace;font-size:12px;color:#000;background:#fff;padding:20mm;max-width:210mm;margin:0 auto;}.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12mm;}.logo-wrap{display:flex;align-items:center;gap:10px;}.logo-img{height:38px;width:auto;}.logo-text{font-size:22px;font-weight:bold;letter-spacing:4px;}.sender-info{font-size:10px;color:#999;margin-top:8px;line-height:1.8;}.invoice-meta{text-align:right;font-size:11px;line-height:1.8;}.inv-title{font-size:18px;font-weight:bold;letter-spacing:3px;margin-bottom:2px;}.inv-sub{font-size:10px;color:#999;letter-spacing:2px;margin-bottom:8px;}.addresses{margin-bottom:10mm;}.address-block{font-size:11px;line-height:1.8;}.label{font-size:9px;letter-spacing:2px;color:#999;text-transform:uppercase;margin-bottom:4px;}.event-info{background:#f5f5f5;padding:8px 12px;margin-bottom:8mm;font-size:11px;line-height:1.8;border-left:3px solid #000;}table{width:100%;border-collapse:collapse;margin-bottom:8mm;}thead tr{background:#000;color:#fff;}th{padding:7px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;}th:nth-child(3),th:nth-child(4),th:nth-child(5){text-align:right;}td{padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;font-size:11px;}td small{font-size:10px;}.total-box{display:flex;justify-content:flex-end;margin-bottom:8mm;}.total-table{width:220px;}.total-table td{padding:4px 10px;border:none;font-size:11px;}.total-table .grand{font-weight:bold;font-size:14px;border-top:2px solid #000;padding-top:8px;}.payment-box{border:1px solid #eee;padding:10px 14px;margin-bottom:8mm;font-size:11px;line-height:1.8;}.footer{border-top:1px solid #eee;padding-top:6mm;font-size:10px;color:#999;line-height:1.7;}.print-btn{position:fixed;top:16px;right:16px;background:#000;color:#fff;border:none;padding:8px 20px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:2px;}@media print{.print-btn{display:none;}body{padding:15mm;}}</style></head><body><button class="print-btn" onclick="window.print()">Drucken / Print</button><div class="header"><div><div class="logo-wrap"><img class="logo-img" src="https://app.nickradar.com/nr_logo.png" alt="nickradar" /><span class="logo-text">nickradar</span></div><div class="sender-info">Luigi La Macchia<br>Badhausstrasse 3<br>6080 Innsbruck-Igls &nbsp;·&nbsp; Austria<br>info@nickradar.com &nbsp;·&nbsp; nickradar.com</div></div><div class="invoice-meta"><div class="inv-title">RECHNUNG</div><div class="inv-sub">INVOICE</div><div style="font-weight:bold;letter-spacing:2px;">${inv.invoice_number}</div><div style="margin-top:6px;color:#999;">Datum / Date: ${invoiceDate}</div></div></div><div class="addresses"><div class="address-block"><div class="label">Rechnungsempfänger / Bill To</div><strong>${a.org_name || ''}</strong><br>${a.street ? a.street + (a.street_number ? ' ' + a.street_number : '') + '<br>' : ''}${a.postal_code || a.city ? (a.postal_code || '') + ' ' + (a.city || '') + '<br>' : ''}${a.country ? a.country + '<br>' : ''}${a.vat ? 'UID / VAT: ' + a.vat : ''}</div></div><div class="event-info"><div class="label">Event</div><strong>${e.event_name}</strong><br>From: ${startDateStr} ${startTime} – To: ${endDateStr} ${endTime} &nbsp;·&nbsp; Timezone: ${tzLabel}<br>Ended by: ${stoppedByStr} &nbsp;·&nbsp; Effective Event Duration: ${durationStr}</div><table><thead><tr><th style="width:30px;">Pos.</th><th>Beschreibung / Description</th><th style="width:60px;">Menge / Qty</th><th style="width:90px;">Preis/Stk / Unit</th><th style="width:90px;">Gesamt / Total</th></tr></thead><tbody>${posRows}</tbody></table><div class="total-box"><table class="total-table"><tr><td>Zwischensumme / Subtotal</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr><tr><td style="font-size:10px;color:#999;">MwSt. / VAT (0%)*</td><td style="text-align:right;font-size:10px;color:#999;">€0.00</td></tr><tr class="grand"><td>Gesamtbetrag / Total</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr></table></div><div class="payment-box"><div class="label">Zahlungsinformation / Payment Info</div>${paymentStatus}</div><div class="footer">* Gemäß §6 Abs. 1 Z 27 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).<br>&nbsp;&nbsp;In accordance with §6 para. 1 no. 27 Austrian VAT Act, no VAT is charged (small business regulation).<br><br>Bei Fragen / Questions: info@nickradar.com &nbsp;·&nbsp; nickradar.com</div></body></html>`;
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
   } catch (err) {
@@ -1040,7 +1042,7 @@ app.post('/api/reports', requireParticipantSession, async (req, res) => {
 app.get('/api/admin/event-admins', requireAdminKey, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, org_name, contact_name, business_type, country, street, plz_city, vat, phone,
+      `SELECT id, org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, phone,
               reports_contact_name, reports_contact_phone, email, status, email_verified, created_at, last_login_at
        FROM event_admin ORDER BY created_at DESC`
     );
@@ -1051,19 +1053,21 @@ app.get('/api/admin/event-admins', requireAdminKey, async (req, res) => {
 });
 
 app.put('/api/admin/event-admin/:id/profile', requireAdminKey, async (req, res) => {
-  const { org_name, contact_name, business_type, country, street, plz_city, vat, phone, reports_contact_name, reports_contact_phone } = req.body;
+  const { org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, phone, reports_contact_name, reports_contact_phone } = req.body;
   try {
     await pool.query(
       `UPDATE event_admin SET
         org_name = COALESCE($1, org_name), contact_name = COALESCE($2, contact_name),
         business_type = COALESCE($3, business_type), country = COALESCE($4, country),
-        street = COALESCE($5, street), plz_city = COALESCE($6, plz_city),
-        vat = COALESCE($7, vat), phone = COALESCE($8, phone),
-        reports_contact_name = COALESCE($9, reports_contact_name),
-        reports_contact_phone = COALESCE($10, reports_contact_phone)
-       WHERE id = $11`,
+        street = COALESCE($5, street), street_number = COALESCE($6, street_number),
+        postal_code = COALESCE($7, postal_code), city = COALESCE($8, city),
+        vat = COALESCE($9, vat), phone = COALESCE($10, phone),
+        reports_contact_name = COALESCE($11, reports_contact_name),
+        reports_contact_phone = COALESCE($12, reports_contact_phone)
+       WHERE id = $13`,
       [org_name || null, contact_name || null, business_type || null, country || null,
-       street || null, plz_city || null, vat || null, phone || null,
+       street || null, street_number || null, postal_code || null, city || null,
+       vat || null, phone || null,
        reports_contact_name || null, reports_contact_phone || null, req.params.id]
     );
     res.json({ success: true });
@@ -1197,7 +1201,7 @@ app.post('/api/admin/stickers/:id/invalidate', requireAdminKey, async (req, res)
 // ============================================================
 
 app.get('/', (req, res) => {
-  res.json({ message: 'nickradar API v6.1.0', status: 'running' });
+  res.json({ message: 'nickradar API v6.2.0', status: 'running' });
 });
 
 // ============================================================
@@ -1248,7 +1252,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.1.0 running on port ${PORT}`);
+  console.log(`nickradar API v6.2.0 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1258,7 +1262,9 @@ app.listen(PORT, '0.0.0.0', async () => {
         business_type VARCHAR(50),
         country VARCHAR(100),
         street VARCHAR(150),
-        plz_city VARCHAR(100),
+        street_number VARCHAR(20),
+        postal_code VARCHAR(20),
+        city VARCHAR(100),
         vat VARCHAR(50),
         phone VARCHAR(50),
         reports_contact_name VARCHAR(100),
@@ -1279,6 +1285,17 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS verification_token VARCHAR(64)`);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS street_number VARCHAR(20)`);
+    await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20)`);
+    await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS city VARCHAR(100)`);
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event_admin' AND column_name='plz_city') THEN
+          UPDATE event_admin SET postal_code = SPLIT_PART(plz_city, ' ', 1), city = TRIM(SUBSTRING(plz_city FROM POSITION(' ' IN plz_city))) WHERE plz_city IS NOT NULL AND postal_code IS NULL;
+        END IF;
+      END $$;
+    `);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event (
@@ -1336,7 +1353,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS invoice (id SERIAL PRIMARY KEY, invoice_number VARCHAR(20) UNIQUE, admin_id INTEGER REFERENCES event_admin(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), total NUMERIC(10,2), currency VARCHAR(3) DEFAULT 'EUR', payment_provider VARCHAR(50), payment_id VARCHAR(255), paid_at TIMESTAMP, created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
 
-    console.log('DB schema v6.1.0 ready');
+    console.log('DB schema v6.2.0 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
