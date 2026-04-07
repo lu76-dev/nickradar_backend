@@ -467,10 +467,12 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
     const startDate = localToUTC(start_at, tz);
     const endsAt = new Date(startDate.getTime() + 8 * 60 * 60 * 1000);
 
+    const rcConfirmToken = require('crypto').randomBytes(32).toString('hex');
+
     const eventResult = await pool.query(
-      `INSERT INTO event (admin_id, event_name, org_name, start_at, ends_at, timezone, status, reports_contact_name, reports_contact_phone, reports_contact_confirmed, paid, sticker_count, activated_count, connection_count, terms_accepted_at, terms_accepted_ip, terms_version, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, FALSE, FALSE, $9, 0, 0, $10, $11, $12, NOW()) RETURNING *`,
-      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, admin.reports_contact_name, admin.reports_contact_phone, count, new Date(terms_accepted_at), termsIp, termsVer]
+      `INSERT INTO event (admin_id, event_name, org_name, start_at, ends_at, timezone, status, reports_contact_name, reports_contact_phone, reports_contact_confirmed, paid, sticker_count, activated_count, connection_count, terms_accepted_at, terms_accepted_ip, terms_version, rc_confirm_token, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, FALSE, FALSE, $9, 0, 0, $10, $11, $12, $13, NOW()) RETURNING *`,
+      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, admin.reports_contact_name, admin.reports_contact_phone, count, new Date(terms_accepted_at), termsIp, termsVer, rcConfirmToken]
     );
     const event = eventResult.rows[0];
 
@@ -487,6 +489,7 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
 
     const totalPrice = calcPrice(count).toFixed(2);
     const startFormatted = startDate.toISOString().replace('T', ' ').slice(0, 16) + ' ' + tzAbbr(tz);
+    const rcConfirmLink = process.env.APP_URL.replace('events.', 'app.') + '/api/events/confirm-rc?token=' + rcConfirmToken;
     const emailLines = [
       'Hello ' + admin.org_name + ',',
       '',
@@ -500,12 +503,17 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
       'Stickers ordered: ' + count,
       'Total amount: EUR ' + totalPrice,
       '',
+      'REPORTS CONTACT',
+      'Name: ' + admin.reports_contact_name,
+      'Phone: ' + admin.reports_contact_phone,
+      '',
+      'Your Reports Contact will receive an SMS with a verification link before the event can be activated.',
+      '',
       'PAYMENT',
       'Payment is due before the event can be activated. You will receive further instructions shortly.',
       '',
       'TERMS ACCEPTANCE',
       'You confirmed the following at ' + new Date(terms_accepted_at).toISOString() + ' (IP: ' + termsIp + '):',
-      '- Reports Contact will be present on-site for the entire event duration',
       '- Terms & Conditions and Privacy Policy accepted',
       '- Non-refundable payment policy acknowledged',
       'Terms version: ' + termsVer,
@@ -521,6 +529,32 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
   } catch (err) {
     console.error('Create event error:', err);
     res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.get('/api/events/confirm-rc', async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;"><h2 style="color:red;">Invalid link.</h2></body></html>');
+  try {
+    const result = await pool.query(
+      "SELECT id, event_name, reports_contact_confirmed FROM event WHERE rc_confirm_token = $1 AND status IN ('pending','active')",
+      [token]
+    );
+    if (result.rows.length === 0) {
+      return res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;background:#fff;"><h2 style="color:#cc0000;">Link invalid or already used.</h2></body></html>');
+    }
+    const ev = result.rows[0];
+    if (ev.reports_contact_confirmed) {
+      return res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;background:#fff;"><h2 style="color:#00aa2a;">&#10003; Already confirmed.</h2><p style="color:#999;">' + ev.event_name + '</p></body></html>');
+    }
+    await pool.query(
+      "UPDATE event SET reports_contact_confirmed = TRUE, rc_confirm_token = NULL WHERE id = $1",
+      [ev.id]
+    );
+    res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;background:#fff;"><div style="font-size:48px;">&#10003;</div><h2 style="color:#00aa2a;letter-spacing:2px;">Confirmed!</h2><p style="color:#999;letter-spacing:1px;">' + ev.event_name + '</p><p style="font-size:11px;color:#bbb;margin-top:20px;">You can close this page.</p></body></html>');
+  } catch (err) {
+    console.error('RC confirm error:', err);
+    res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;"><h2 style="color:red;">Server error.</h2></body></html>');
   }
 });
 
@@ -1347,7 +1381,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.3.8 running on port ${PORT}`);
+  console.log(`nickradar API v6.4.13 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1448,11 +1482,12 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS invoice (id SERIAL PRIMARY KEY, invoice_number VARCHAR(20) UNIQUE, admin_id INTEGER REFERENCES event_admin(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), total NUMERIC(10,2), currency VARCHAR(3) DEFAULT 'EUR', payment_provider VARCHAR(50), payment_id VARCHAR(255), paid_at TIMESTAMP, created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
 
+    await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS rc_confirm_token VARCHAR(64)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.12 ready');
+    console.log('DB schema v6.4.13 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
