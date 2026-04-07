@@ -440,9 +440,12 @@ app.delete('/api/event-admin/account', requireEventAdminAuth, async (req, res) =
 // ============================================================
 
 app.post('/api/events', requireEventAdminAuth, async (req, res) => {
-  const { event_name, org_name, start_at, sticker_count, timezone, terms_accepted_at, terms_version } = req.body;
+  const { event_name, org_name, start_at, sticker_count, timezone, reports_contact_name, reports_contact_phone, terms_accepted_at, terms_version } = req.body;
   if (!event_name || !start_at || !sticker_count) {
     return res.status(400).json({ success: false, error: 'event_name, start_at, sticker_count required' });
+  }
+  if (!reports_contact_name || !reports_contact_phone) {
+    return res.status(400).json({ success: false, error: 'reports contact name and phone are required' });
   }
   if (!terms_accepted_at) {
     return res.status(400).json({ success: false, error: 'terms acceptance required' });
@@ -460,10 +463,6 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
     if (adminResult.rows.length === 0) return res.status(404).json({ success: false, error: 'admin not found' });
     const admin = adminResult.rows[0];
 
-    if (!admin.reports_contact_name || !admin.reports_contact_phone) {
-      return res.status(400).json({ success: false, error: 'please complete your account profile first -- reports contact name and phone are required' });
-    }
-
     const startDate = localToUTC(start_at, tz);
     const endsAt = new Date(startDate.getTime() + 8 * 60 * 60 * 1000);
 
@@ -472,7 +471,7 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
     const eventResult = await pool.query(
       `INSERT INTO event (admin_id, event_name, org_name, start_at, ends_at, timezone, status, reports_contact_name, reports_contact_phone, reports_contact_confirmed, paid, sticker_count, activated_count, connection_count, terms_accepted_at, terms_accepted_ip, terms_version, rc_confirm_token, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, FALSE, FALSE, $9, 0, 0, $10, $11, $12, $13, NOW()) RETURNING *`,
-      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, admin.reports_contact_name, admin.reports_contact_phone, count, new Date(terms_accepted_at), termsIp, termsVer, rcConfirmToken]
+      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, reports_contact_name.trim(), reports_contact_phone.trim(), count, new Date(terms_accepted_at), termsIp, termsVer, rcConfirmToken]
     );
     const event = eventResult.rows[0];
 
@@ -504,8 +503,8 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
       'Total amount: EUR ' + totalPrice,
       '',
       'REPORTS CONTACT',
-      'Name: ' + admin.reports_contact_name,
-      'Phone: ' + admin.reports_contact_phone,
+      'Name: ' + reports_contact_name.trim(),
+      'Phone: ' + reports_contact_phone.trim(),
       '',
       'Your Reports Contact will receive an SMS with a verification link before the event can be activated.',
       '',
