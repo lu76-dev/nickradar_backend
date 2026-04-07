@@ -517,6 +517,13 @@ async function doCreateEvent() {
   var confirmPayment=document.getElementById('confirm-payment').checked;
   var msg=document.getElementById('create-msg');
   msg.style.color='red'; msg.textContent='';
+  var rcCheck = await fetch(API+'/api/event-admin/me?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
+  var rcData = await rcCheck.json();
+  if (!rcData.success || !rcData.admin.reports_contact_name || !rcData.admin.reports_contact_phone) {
+    msg.textContent='Reports Contact is not set. Please set it before creating an event.';
+    checkRcStatus();
+    return;
+  }
   if (!eventName) { msg.textContent='Event name required.'; return; }
   if (!startAt) { msg.textContent='Start time required.'; return; }
   if (!count||count<24) { msg.textContent='Minimum 24 stickers.'; return; }
