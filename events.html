@@ -411,36 +411,35 @@ function showTab(name) {
 async function checkRcStatus() {
   var box = document.getElementById('rc-status-box');
   if (!box) return;
+  var hasRc = false;
   try {
     var r = await fetch(API+'/api/event-admin/me?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
     var d = await r.json();
-    var hasRc = d.success && d.admin.reports_contact_name && d.admin.reports_contact_phone;
-    box.innerHTML = '';
-    if (!hasRc) {
-      box.style.background = '#fff5f5';
-      box.style.border = '1px solid #ffcccc';
-      box.style.color = '#cc0000';
-      var link = document.createElement('strong');
-      link.textContent = 'Set it now';
-      link.style.cssText = 'cursor:pointer;text-decoration:underline;';
-      link.addEventListener('click', function(){ showTab('reportscontact'); });
-      box.appendChild(document.createTextNode('⚠ Reports Contact not set. '));
-      box.appendChild(link);
-      box.appendChild(document.createTextNode(' before creating an event.'));
-    } else {
-      box.style.background = '#f7f7f7';
-      box.style.border = '1px solid #eee';
-      box.style.color = '#999';
-      var link2 = document.createElement('strong');
-      link2.textContent = 'Reports Contact';
-      link2.style.cssText = 'color:#000;cursor:pointer;';
-      link2.addEventListener('click', function(){ showTab('reportscontact'); });
-      box.appendChild(document.createTextNode('Reports Contact from your account profile will be used automatically. Make sure it is set in '));
-      box.appendChild(link2);
-      box.appendChild(document.createTextNode(' before creating an event.'));
-    }
-  } catch(e) {}
+    hasRc = !!(d.success && d.admin && d.admin.reports_contact_name && d.admin.reports_contact_phone);
+  } catch(e) { hasRc = false; }
+  box.innerHTML = '';
+  if (!hasRc) {
+    box.style.cssText = 'margin-top:16px;padding:12px 14px;background:#fff5f5;border:1px solid #ffcccc;font-size:10px;color:#cc0000;line-height:1.7;max-width:440px;';
+    var warn = document.createTextNode('⚠ Reports Contact not set. ');
+    var lnk = document.createElement('strong');
+    lnk.textContent = 'Set it now';
+    lnk.style.cssText = 'cursor:pointer;text-decoration:underline;color:#cc0000;';
+    lnk.onclick = function(){ showTab('reportscontact'); };
+    var after = document.createTextNode(' before creating an event.');
+    box.appendChild(warn);
+    box.appendChild(lnk);
+    box.appendChild(after);
+  } else {
+    box.style.cssText = 'margin-top:16px;padding:12px 14px;background:#f7f7f7;border:1px solid #eee;font-size:10px;color:#999;line-height:1.7;max-width:440px;';
+    box.appendChild(document.createTextNode('Reports Contact from your account profile will be used automatically. '));
+    var lnk2 = document.createElement('strong');
+    lnk2.textContent = 'Make sure it is set.';
+    lnk2.style.cssText = 'color:#000;cursor:pointer;';
+    lnk2.onclick = function(){ showTab('reportscontact'); };
+    box.appendChild(lnk2);
+  }
 }
+
 
 async function doLogin() {
   var email = document.getElementById('login-email').value.trim();
