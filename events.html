@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nickradar — Event Admin Portal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #fff; color: #000; font-family: 'Share Tech Mono', 'Courier New', monospace; font-size: 13px; }
+
+    #screen-login, #screen-register, #screen-verify { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+    .auth-wrap { width: 340px; }
+    .auth-logo { font-size: 20px; font-weight: bold; letter-spacing: 4px; margin-bottom: 32px; color: #000; display: flex; align-items: center; gap: 10px; }
+    .auth-logo img { height: 28px; width: auto; }
+    .auth-logo span { color: #000; }
+    .auth-title { font-size: 11px; letter-spacing: 3px; color: #666; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 8px; text-transform: uppercase; }
+    .auth-wrap label { font-size: 10px; letter-spacing: 2px; color: #666; display: block; margin-bottom: 4px; margin-top: 12px; text-transform: uppercase; }
+    .auth-wrap input { border: 1px solid #ccc; padding: 8px 10px; font-size: 13px; width: 100%; outline: none; font-family: inherit; }
+    .auth-wrap input:focus { border-color: #000; }
+    .btn-main { background: #000; color: #fff; border: none; padding: 10px; font-size: 12px; cursor: pointer; width: 100%; font-family: inherit; letter-spacing: 2px; margin-top: 20px; text-transform: uppercase; }
+    .btn-main:hover { background: #333; }
+    .auth-link { font-size: 11px; color: #999; text-align: center; margin-top: 14px; letter-spacing: 1px; }
+    .auth-link span { color: #000; text-decoration: underline; cursor: pointer; }
+    .auth-error { color: red; font-size: 11px; margin-top: 8px; }
+    .auth-success { color: green; font-size: 11px; margin-top: 8px; }
+
+    #screen-portal { display: none; }
+    .top-bar { background: #fff; color: #000; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; }
+    .top-bar-logo { font-size: 14px; font-weight: bold; letter-spacing: 3px; color: #000; display: flex; align-items: center; gap: 8px; }
+    .top-bar-logo img { height: 26px; width: auto; }
+    .top-bar-logo span { color: #000; }
+    .top-bar-org { font-size: 11px; color: #666; letter-spacing: 2px; margin-left: 16px; }
+    .top-bar-org strong { color: #000; font-weight: bold; }
+    .top-bar-right button { background: none; border: 1px solid #ccc; color: #666; padding: 4px 12px; font-size: 11px; cursor: pointer; font-family: inherit; }
+    .top-bar-right button:hover { border-color: #000; color: #000; }
+
+    .tabs { border-bottom: 2px solid #000; display: flex; }
+    .tab { padding: 10px 20px; cursor: pointer; font-size: 11px; border: none; background: none; border-right: 1px solid #eee; font-family: inherit; letter-spacing: 2px; text-transform: uppercase; }
+    .tab:hover { background: #f5f5f5; }
+    .tab.active { background: #000; color: #fff; }
+
+    .content { padding: 24px; display: none; }
+    .content.active { display: block; }
+    .section-title { font-size: 11px; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 20px; padding-bottom: 8px; border-bottom: 1px solid #eee; color: #666; }
+
+    .form-box { max-width: 440px; }
+    .form-row { margin-bottom: 14px; }
+    .form-row label { font-size: 10px; letter-spacing: 2px; color: #666; display: block; margin-bottom: 4px; text-transform: uppercase; }
+    .form-row input { border: 1px solid #ccc; padding: 8px 10px; font-size: 13px; width: 100%; outline: none; font-family: inherit; }
+    .form-row input:focus { border-color: #000; }
+    .form-row .hint { font-size: 10px; color: #999; margin-top: 4px; letter-spacing: 1px; }
+    .form-msg { font-size: 11px; margin-top: 8px; }
+
+    .btn-green { background: #00ff41; color: #000; border: 1px solid #000; padding: 10px 20px; font-size: 11px; cursor: pointer; font-family: inherit; letter-spacing: 2px; font-weight: bold; text-transform: uppercase; }
+    .btn-green:hover { background: #00e639; }
+    .btn-outline { background: #fff; color: #000; border: 1px solid #ccc; padding: 6px 12px; font-size: 11px; cursor: pointer; font-family: inherit; letter-spacing: 1px; }
+    .btn-outline:hover { border-color: #000; }
+    .btn-danger { background: #fff; color: #cc0000; border: 1px solid #cc0000; padding: 6px 12px; font-size: 11px; cursor: pointer; font-family: inherit; }
+    .btn-danger:hover { background: #cc0000; color: #fff; }
+
+    .event-card { border: 1px solid #e0e0e0; margin-bottom: 12px; background: #f9f9f9; }
+    .event-card-head { padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e0e0e0; background: #f0f0f0; }
+    .event-card-name { font-size: 13px; font-weight: bold; letter-spacing: 2px; }
+    .event-card-status { font-size: 9px; letter-spacing: 2px; padding: 3px 8px; text-transform: uppercase; }
+    .status-active { background: #00ff41; color: #000; }
+    .status-pending { border: 1px solid #ccc; color: #999; }
+    .status-stopped { background: #000; color: #fff; }
+    .status-finished { background: #eee; color: #999; }
+    .event-card-body { padding: 10px 14px; display: flex; gap: 20px; font-size: 11px; color: #999; flex-wrap: wrap; align-items: center; }
+    .event-card-body strong { color: #000; }
+    
+    .event-card-actions { padding: 10px 14px; border-top: 1px solid #eee; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .btn-action { height: 30px; background: #fff; color: #000; border: 1px solid #ccc; padding: 0 12px; font-size: 11px; cursor: pointer; font-family: inherit; letter-spacing: 1px; white-space: nowrap; }
+    .btn-action:hover { border-color: #000; }
+    .btn-action-input { height: 30px; width: 70px; border: 1px solid #ccc; padding: 0 8px; font-size: 12px; font-family: inherit; outline: none; }
+    .btn-action-input:focus { border-color: #000; }
+    .btn-action-buy { background: #00ff41; border-color: #000; font-weight: bold; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-action-buy:hover { background: #00e639; }
+    .btn-action-stop { height: 30px; background: #fff; color: #cc0000; border: 1px solid #cc0000; padding: 0 12px; font-size: 11px; cursor: pointer; font-family: inherit; letter-spacing: 1px; font-weight: bold; white-space: nowrap; }
+    .btn-action-stop:hover { background: #cc0000; color: #fff; }
+
+    .eas-box { border: 1px solid #ddd; padding: 6px 12px; min-width: 210px; flex-shrink: 0; }
+    .eas-line { font-size: 10px; letter-spacing: 1px; padding: 2px 0; white-space: nowrap; font-family: 'Share Tech Mono', 'Courier New', monospace; }
+
+    .participant-list-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid #ddd; max-width: 760px; }
+    .participant-cell { border-right: 1px solid #ddd; border-bottom: 1px solid #ddd; padding: 10px 12px; min-height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 3px; position: relative; }
+    .participant-cell:nth-child(3n) { border-right: none; }
+    .participant-cell.empty-cell { background: #fafafa; }
+    .participant-cell.inactive-cell { background: #f5f5f5; opacity: 0.6; }
+    .participant-nick { font-size: 16px; font-weight: bold; letter-spacing: 2px; }
+    .participant-code { font-size: 10px; color: #00aa2a; letter-spacing: 2px; }
+    .participant-status { font-size: 9px; color: #bbb; letter-spacing: 1px; text-transform: uppercase; }
+    .participant-status.online { color: #00aa2a; }
+    .participant-inv-btn { position: absolute; top: 4px; right: 4px; font-size: 9px; background: none; border: none; color: #ddd; cursor: pointer; font-family: inherit; padding: 2px 4px; }
+    .participant-inv-btn:hover { color: #cc0000; }
+
+    .info-box { background: #fafafa; border: 1px solid #eee; padding: 16px; max-width: 440px; }
+    .info-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #eee; font-size: 11px; }
+    .info-row:last-child { border-bottom: none; }
+    .info-label { color: #999; letter-spacing: 1px; text-transform: uppercase; font-size: 10px; }
+
+    .loading { padding: 40px; text-align: center; color: #ccc; letter-spacing: 2px; font-size: 11px; }
+    .empty { padding: 40px; text-align: center; color: #ccc; letter-spacing: 2px; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<div id="screen-login" style="display:flex;">
+  <div class="auth-wrap">
+    <div class="auth-logo"><img src="nr_logo.png" alt="nickradar logo" />nickradar</div>
+    <div class="auth-title">Event Admin Login</div>
+    <label>Email</label>
+    <input type="email" id="login-email" onkeydown="if(event.key==='Enter')doLogin()" />
+    <label>Password</label>
+    <input type="password" id="login-pw" onkeydown="if(event.key==='Enter')doLogin()" />
+    <div class="auth-error" id="login-error"></div>
+    <button class="btn-main" onclick="doLogin()">Login</button>
+    <div class="auth-link">No account? <span onclick="showScreen('register')">Register here</span></div>
+  </div>
+</div>
+
+<div id="screen-register" style="display:none;">
+  <div class="auth-wrap" style="width:380px;">
+    <div class="auth-logo"><img src="nr_logo.png" alt="nickradar logo" />nickradar</div>
+    <div class="auth-title">Register as Event Admin</div>
+    <label>Company Name / Organization *</label>
+    <input type="text" id="reg-org" />
+    <label>Contact Person *</label>
+    <input type="text" id="reg-contact" />
+    <label>Business Type *</label>
+    <select id="reg-business-type" style="border:1px solid #ccc;padding:8px 10px;font-size:13px;width:100%;outline:none;font-family:inherit;background:#fff;margin-top:4px;">
+      <option value="">— select —</option>
+      <option value="agency_promoter">Agency / Promoter</option>
+      <option value="club_bar_lounge">Club / Bar / Lounge</option>
+      <option value="conference_congress">Conference / Congress</option>
+      <option value="corporate_networking">Corporate / Networking Event</option>
+      <option value="cruise_travel">Cruise / Travel Event</option>
+      <option value="festival_open_air">Festival / Open Air Organizer</option>
+      <option value="hotel_resort">Hotel / Resort / Hospitality</option>
+      <option value="music_concert">Music / Concert Venue</option>
+      <option value="sports_gaming">Sports Event / Gaming</option>
+      <option value="team_building">Team Building Event</option>
+      <option value="university_campus">University / Campus Event</option>
+      <option value="other">Other</option>
+    </select>
+    <label>Country *</label>
+    <select id="reg-country" style="border:1px solid #ccc;padding:8px 10px;font-size:13px;width:100%;outline:none;font-family:inherit;background:#fff;margin-top:4px;">
+      <option value="">— select —</option>
+      <option value="Austria">Austria</option>
+      <option value="Germany">Germany</option>
+      <option value="Switzerland">Switzerland</option>
+      <option value="Italy">Italy</option>
+      <option value="France">France</option>
+      <option value="Spain">Spain</option>
+      <option value="Netherlands">Netherlands</option>
+      <option value="Belgium">Belgium</option>
+      <option value="United Kingdom">United Kingdom</option>
+      <option value="Poland">Poland</option>
+      <option value="Czech Republic">Czech Republic</option>
+      <option value="Hungary">Hungary</option>
+      <option value="Croatia">Croatia</option>
+      <option value="Romania">Romania</option>
+      <option value="Portugal">Portugal</option>
+      <option value="Sweden">Sweden</option>
+      <option value="Norway">Norway</option>
+      <option value="Denmark">Denmark</option>
+      <option value="Finland">Finland</option>
+      <option value="Greece">Greece</option>
+      <option value="Turkey">Turkey</option>
+      <option value="United States">United States</option>
+      <option value="Canada">Canada</option>
+      <option value="Brazil">Brazil</option>
+      <option value="Australia">Australia</option>
+      <option value="Japan">Japan</option>
+      <option value="Singapore">Singapore</option>
+      <option value="UAE">UAE</option>
+      <option value="Other">Other</option>
+    </select>
+    <label>Business Email *</label>
+    <input type="email" id="reg-email" />
+    <label>Password * (min. 8 characters)</label>
+    <input type="password" id="reg-pw" />
+    <label>Repeat Password *</label>
+    <input type="password" id="reg-pw2" />
+    <div style="display:flex;align-items:center;gap:10px;margin-top:16px;padding:10px 12px;border:1px solid #eee;background:#fafafa;">
+      <input type="checkbox" id="reg-terms" style="width:16px;height:16px;flex-shrink:0;cursor:pointer;" />
+      <label for="reg-terms" style="font-size:11px;color:#666;line-height:1.5;cursor:pointer;">I agree to the <a href="https://nickradar.com/terms.html" target="_blank" style="color:#000;text-decoration:underline;">Terms &amp; Conditions</a> and <a href="https://nickradar.com/privacy.html" target="_blank" style="color:#000;text-decoration:underline;">Privacy Policy</a>.</label>
+    </div>
+    <div class="auth-error" id="reg-error"></div>
+    <div class="auth-success" id="reg-success"></div>
+    <button class="btn-main" onclick="doRegister()">Create Account</button>
+    <div class="auth-link">Already registered? <span onclick="showScreen('login')">Login</span></div>
+  </div>
+</div>
+
+<div id="screen-verify" style="display:none;">
+  <div class="auth-wrap">
+    <div class="auth-logo"><img src="nr_logo.png" alt="nickradar logo" />nickradar</div>
+    <div id="verify-content" style="font-size:13px;letter-spacing:1px;color:#666;text-align:center;">Verifying your email...</div>
+    <div class="auth-link" style="margin-top:20px;text-align:center;"><span onclick="showScreen('login')">Go to Login</span></div>
+  </div>
+</div>
+
+<div id="screen-portal">
+  <div class="top-bar">
+    <div style="display:flex;align-items:center;">
+      <div class="top-bar-logo"><img src="nr_logo.png" alt="nickradar logo" />nickradar</div>
+      <div class="top-bar-org">EVENT ADMIN: <strong id="top-org-name"></strong></div>
+    </div>
+    <div class="top-bar-right"><button onclick="doLogout()">Logout</button></div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('create')">New Event</button>
+    <button class="tab" onclick="showTab('events')">My Events</button>
+    <button class="tab" onclick="showTab('account')">My Account</button>
+    <button class="tab" onclick="showTab('reportscontact')">Reports Contact</button>
+    <button class="tab" onclick="showTab('invoices')">Invoices</button>
+  </div>
+
+  <div class="content active" id="tab-create">
+    <div class="section-title">Create New Nickname Event</div>
+    <div class="form-box">
+      <div class="form-row"><label>Event Name</label><input type="text" id="new-event-name" /></div>
+      <div class="form-row">
+        <label>Date & Start Time</label>
+        <input type="datetime-local" id="new-start-at" />
+        <div class="hint">Duration is automatically set to 8 hours.</div>
+      </div>
+      <div class="form-row">
+        <label>Event Timezone</label>
+        <select id="new-timezone" style="border:1px solid #ccc;padding:8px 10px;font-size:13px;width:100%;outline:none;font-family:inherit;background:#fff;">
+          <optgroup label="Europe">
+            <option value="Europe/Vienna">Vienna / Innsbruck (CET)</option>
+            <option value="Europe/Berlin">Berlin / Munich (CET)</option>
+            <option value="Europe/London">London (GMT)</option>
+            <option value="Europe/Paris">Paris / Brussels (CET)</option>
+            <option value="Europe/Rome">Rome / Milan (CET)</option>
+            <option value="Europe/Madrid">Madrid / Barcelona (CET)</option>
+            <option value="Europe/Amsterdam">Amsterdam (CET)</option>
+            <option value="Europe/Zurich">Zurich / Geneva (CET)</option>
+            <option value="Europe/Warsaw">Warsaw / Prague (CET)</option>
+            <option value="Europe/Stockholm">Stockholm / Oslo (CET)</option>
+            <option value="Europe/Helsinki">Helsinki / Riga (EET)</option>
+            <option value="Europe/Athens">Athens / Bucharest (EET)</option>
+            <option value="Europe/Lisbon">Lisbon (WET)</option>
+            <option value="Europe/Moscow">Moscow (MSK)</option>
+            <option value="Europe/Istanbul">Istanbul (TRT)</option>
+          </optgroup>
+          <optgroup label="Americas">
+            <option value="America/New_York">New York / Miami (ET)</option>
+            <option value="America/Chicago">Chicago / Dallas (CT)</option>
+            <option value="America/Denver">Denver / Phoenix (MT)</option>
+            <option value="America/Los_Angeles">Los Angeles / Seattle (PT)</option>
+            <option value="America/Toronto">Toronto / Montreal (ET)</option>
+            <option value="America/Vancouver">Vancouver (PT)</option>
+            <option value="America/Mexico_City">Mexico City (CT)</option>
+            <option value="America/Sao_Paulo">São Paulo / Rio (BRT)</option>
+            <option value="America/Buenos_Aires">Buenos Aires (ART)</option>
+            <option value="America/Bogota">Bogotá / Lima (COT)</option>
+          </optgroup>
+          <optgroup label="Asia / Pacific">
+            <option value="Asia/Dubai">Dubai / Abu Dhabi (GST)</option>
+            <option value="Asia/Kolkata">Mumbai / Delhi (IST)</option>
+            <option value="Asia/Bangkok">Bangkok / Jakarta (ICT)</option>
+            <option value="Asia/Singapore">Singapore / KL (SGT)</option>
+            <option value="Asia/Shanghai">Beijing / Shanghai (CST)</option>
+            <option value="Asia/Tokyo">Tokyo / Osaka (JST)</option>
+            <option value="Asia/Seoul">Seoul (KST)</option>
+            <option value="Australia/Sydney">Sydney / Melbourne (AEST)</option>
+            <option value="Pacific/Auckland">Auckland (NZST)</option>
+          </optgroup>
+          <optgroup label="Africa / Middle East">
+            <option value="Africa/Cairo">Cairo (EET)</option>
+            <option value="Africa/Johannesburg">Johannesburg (SAST)</option>
+            <option value="Africa/Lagos">Lagos / Accra (WAT)</option>
+            <option value="Africa/Nairobi">Nairobi (EAT)</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Number of Participants / Stickers (min. 24)</label>
+        <input type="number" id="new-sticker-count" placeholder="e.g. 100" min="24" max="10000" oninput="updatePrice()" />
+        <div class="hint" id="price-hint">Enter quantity to see price.</div>
+      </div>
+      <div id="rc-status-box" style="margin-top:16px;padding:12px 14px;background:#f7f7f7;border:1px solid #eee;font-size:10px;color:#999;line-height:1.7;max-width:440px;">
+        Reports Contact from your account profile will be used automatically. Make sure it is set in <strong style="color:#000;cursor:pointer;" onclick="showTab('reportscontact')">Reports Contact</strong> before creating an event.
+      </div>
+      <div class="form-msg" id="create-msg"></div>
+      <div style="background:#f7f7f7;border:1px solid #eee;padding:14px;max-width:440px;margin-bottom:12px;">
+        <div style="font-size:10px;color:#666;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #e0e0e0;">Please confirm to proceed</div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">
+          <input type="checkbox" id="confirm-terms" style="width:16px;height:16px;flex-shrink:0;margin-top:1px;cursor:pointer;" />
+          <label for="confirm-terms" style="font-size:11px;color:#666;line-height:1.5;cursor:pointer;">I accept the <a href="https://nickradar.com/terms.html" target="_blank" style="color:#000;text-decoration:underline;">Terms &amp; Conditions</a> and <a href="https://nickradar.com/privacy.html" target="_blank" style="color:#000;text-decoration:underline;">Privacy Policy</a>.</label>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;">
+          <input type="checkbox" id="confirm-payment" style="width:16px;height:16px;flex-shrink:0;margin-top:1px;cursor:pointer;" />
+          <label for="confirm-payment" style="font-size:11px;color:#666;line-height:1.5;cursor:pointer;">I understand that payment is non-refundable once stickers have been generated.</label>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/b/ba/Stripe_Logo%2C_revised_2016.svg" alt="Stripe" style="height:20px;width:auto;opacity:0.5;" />
+        <span style="font-size:10px;color:#bbb;letter-spacing:1px;">Secure payment with Stripe</span>
+      </div>
+      <button class="btn-green" onclick="doCreateEvent()">Pay &amp; Create Event</button>
+    </div>
+  </div>
+
+  <div class="content" id="tab-events">
+    <div class="section-title">My Nickname Events</div>
+    <div style="margin-bottom:16px;">
+      <button class="btn-outline" onclick="loadEvents()">↻ Refresh</button>
+    </div>
+    <div id="events-list"><div class="loading">Loading...</div></div>
+    <div id="events-history-wrap" style="display:none;margin-top:32px;">
+      <div class="section-title" style="cursor:pointer;" onclick="toggleHistory()">
+        Event History <span id="history-toggle" style="font-size:10px;letter-spacing:1px;">▼ show</span>
+      </div>
+      <div id="events-history" style="display:none;"></div>
+    </div>
+  </div>
+
+  <div class="content" id="tab-participantlist">
+    <div style="margin-bottom:16px;"><button class="btn-outline" onclick="showTab('events')">← Back</button></div>
+    <div id="participantlist-content"><div class="loading">Loading...</div></div>
+  </div>
+
+  <div class="content" id="tab-account">
+    <div class="section-title">My Account</div>
+    <div id="account-content"><div class="loading">Loading...</div></div>
+  </div>
+
+  <div class="content" id="tab-reportscontact">
+    <div id="reportscontact-content"><div class="loading">Loading...</div></div>
+  </div>
+
+  <div class="content" id="tab-invoices">
+    <div id="invoices-content"><div class="loading">Loading...</div></div>
+  </div>
+</div>
+
+<script>
+var API = 'https://app.nickradar.com';
+var token = localStorage.getItem('nr_ea_token');
+var adminData = null;
+
+window.onload = function() {
+  var urlParams = new URLSearchParams(window.location.search);
+  var verifyToken = urlParams.get('token');
+  if (verifyToken) {
+    doVerifyEmail(verifyToken);
+    return;
+  }
+  if (token) verifyToken_();
+  else showScreen('login');
+};
+
+async function doVerifyEmail(t) {
+  showScreen('verify');
+  try {
+    var r = await fetch(API+'/api/event-admin/verify', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:t}) });
+    var d = await r.json();
+    var el = document.getElementById('verify-content');
+    if (d.success) {
+      el.style.color='green';
+      el.textContent='✓ Email verified! You can now log in.';
+    } else {
+      el.style.color='red';
+      el.textContent='Verification failed: '+d.error;
+    }
+  } catch(e) {
+    document.getElementById('verify-content').textContent='Connection error.';
+  }
+}
+
+async function verifyToken_() {
+  try {
+    var r = await fetch(API + '/api/event-admin/me', { headers: { Authorization: 'Bearer ' + token } });
+    var d = await r.json();
+    if (d.success) { adminData = d.admin; showPortal(); }
+    else { localStorage.removeItem('nr_ea_token'); showScreen('login'); }
+  } catch(e) { showScreen('login'); }
+}
+
+function showScreen(name) {
+  ['login','register','portal','verify'].forEach(function(s) { document.getElementById('screen-'+s).style.display='none'; });
+  var el = document.getElementById('screen-'+name);
+  el.style.display = (name==='portal') ? 'block' : 'flex';
+}
+
+function showPortal() {
+  showScreen('portal');
+  document.getElementById('top-org-name').textContent = adminData.org_name;
+  loadEvents();
+  checkRcStatus();
+}
+
+function showTab(name) {
+  var tabs = ['create','events','account','reportscontact','invoices'];
+  document.querySelectorAll('.tab').forEach(function(t,i) { t.classList.toggle('active', tabs[i]===name); });
+  document.querySelectorAll('.content').forEach(function(c) { c.classList.remove('active'); });
+  var el = document.getElementById('tab-'+name);
+  if (el) el.classList.add('active');
+  if (name==='create') checkRcStatus();
+  if (name==='events') loadEvents();
+  if (name==='account') loadAccount();
+  if (name==='reportscontact') loadReportsContact();
+  if (name==='invoices') loadInvoices();
+}
+
+async function checkRcStatus() {
+  var box = document.getElementById('rc-status-box');
+  if (!box) return;
+  try {
+    var r = await fetch(API+'/api/event-admin/me?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
+    var d = await r.json();
+    var hasRc = d.success && d.admin.reports_contact_name && d.admin.reports_contact_phone;
+    if (!hasRc) {
+      box.style.background = '#fff5f5';
+      box.style.border = '1px solid #ffcccc';
+      box.style.color = '#cc0000';
+      box.innerHTML = "&#9888; Reports Contact not set. <strong style='cursor:pointer;text-decoration:underline;' onclick='showTab("reportscontact")'>Set it now</strong> before creating an event.";
+    } else {
+      box.style.background = '#f7f7f7';
+      box.style.border = '1px solid #eee';
+      box.style.color = '#999';
+      box.innerHTML = "Reports Contact from your account profile will be used automatically. <strong style='color:#000;cursor:pointer;' onclick='showTab("reportscontact")'>Make sure it is set.</strong>";
+    }
+  } catch(e) {}
+}
+
+async function doLogin() {
+  var email = document.getElementById('login-email').value.trim();
+  var pw = document.getElementById('login-pw').value;
+  var err = document.getElementById('login-error');
+  err.textContent = '';
+  if (!email||!pw) { err.textContent='Email and password required.'; return; }
+  try {
+    var r = await fetch(API+'/api/event-admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:email,password:pw}) });
+    var d = await r.json();
+    if (!d.success) { err.textContent=d.error; return; }
+    token=d.token; adminData=d.admin;
+    localStorage.setItem('nr_ea_token', token);
+    showPortal();
+  } catch(e) { err.textContent='Connection error.'; }
+}
+
+async function doRegister() {
+  var org=document.getElementById('reg-org').value.trim();
+  var contact=document.getElementById('reg-contact').value.trim();
+  var businessType=document.getElementById('reg-business-type').value;
+  var country=document.getElementById('reg-country').value;
+  var email=document.getElementById('reg-email').value.trim();
+  var pw=document.getElementById('reg-pw').value;
+  var pw2=document.getElementById('reg-pw2').value;
+  var terms=document.getElementById('reg-terms').checked;
+  var err=document.getElementById('reg-error'), succ=document.getElementById('reg-success');
+  err.textContent=''; succ.textContent='';
+  if (!org||!contact||!email||!pw||!pw2) { err.textContent='Please fill all required fields.'; return; }
+  if (!businessType) { err.textContent='Please select a business type.'; return; }
+  if (!country) { err.textContent='Please select a country.'; return; }
+  if (pw.length<8) { err.textContent='Password min. 8 characters.'; return; }
+  if (pw!==pw2) { err.textContent='Passwords do not match.'; return; }
+  if (!terms) { err.textContent='Please accept the Terms & Conditions.'; return; }
+  try {
+    var r = await fetch(API+'/api/event-admin/register', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({org_name:org,contact_name:contact,business_type:businessType,country:country,email:email,password:pw,confirm_password:pw2}) });
+    var d = await r.json();
+    if (!d.success) { err.textContent=d.error; return; }
+    succ.textContent='✓ Registration received! Please check your email to verify your account.';
+    ['reg-org','reg-contact','reg-email','reg-pw','reg-pw2'].forEach(function(id){document.getElementById(id).value='';});
+    document.getElementById('reg-business-type').value='';
+    document.getElementById('reg-country').value='';
+    document.getElementById('reg-terms').checked=false;
+  } catch(e) { err.textContent='Connection error.'; }
+}
+
+function doLogout() { localStorage.removeItem('nr_ea_token'); token=null; adminData=null; showScreen('login'); }
+
+function calcPrice(count) {
+  if (count>=5000) return count*0.40;
+  if (count>=2000) return count*0.50;
+  if (count>=1000) return count*0.60;
+  if (count>=500)  return count*0.70;
+  if (count>=200)  return count*0.80;
+  if (count>=100)  return count*0.90;
+  return count*1.00;
+}
+
+function updatePrice() {
+  var count=parseInt(document.getElementById('new-sticker-count').value);
+  var hint=document.getElementById('price-hint');
+  if (!count||count<24) { hint.style.color='#cc0000'; hint.textContent='Minimum 24 stickers.'; return; }
+  var price=calcPrice(count);
+  hint.style.color='#666';
+  hint.textContent=count+' stickers → €'+price.toFixed(2)+' (€'+(price/count).toFixed(2)+' / sticker)';
+}
+
+async function doCreateEvent() {
+  var eventName=document.getElementById('new-event-name').value.trim();
+  var startAt=document.getElementById('new-start-at').value;
+  var timezone=document.getElementById('new-timezone').value;
+  var count=parseInt(document.getElementById('new-sticker-count').value);
+  var confirmTerms=document.getElementById('confirm-terms').checked;
+  var confirmPayment=document.getElementById('confirm-payment').checked;
+  var msg=document.getElementById('create-msg');
+  msg.style.color='red'; msg.textContent='';
+  if (!eventName) { msg.textContent='Event name required.'; return; }
+  if (!startAt) { msg.textContent='Start time required.'; return; }
+  if (!count||count<24) { msg.textContent='Minimum 24 stickers.'; return; }
+  if (!confirmTerms) { msg.textContent='Please accept the Terms & Conditions and Privacy Policy.'; return; }
+  if (!confirmPayment) { msg.textContent='Please confirm the non-refundable payment policy.'; return; }
+  var termsAcceptedAt=new Date().toISOString();
+  msg.style.color='#666'; msg.textContent='Generating stickers...';
+  try {
+    var r = await fetch(API+'/api/events', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body:JSON.stringify({event_name:eventName,start_at:startAt,sticker_count:count,timezone:timezone,terms_accepted_at:termsAcceptedAt,terms_version:'v1.0'}) });
+    var d = await r.json();
+    if (!d.success) { msg.style.color='red'; msg.textContent='Error: '+d.error; return; }
+    msg.style.color='green'; msg.textContent='✓ Event created! Awaiting reports contact confirmation and payment.';
+    ['new-event-name','new-start-at','new-sticker-count'].forEach(function(id){document.getElementById(id).value='';});
+    document.getElementById('price-hint').textContent='Enter quantity to see price.';
+    document.getElementById('confirm-terms').checked=false;
+    document.getElementById('confirm-payment').checked=false;
+    showTab('events');
+  } catch(e) { msg.style.color='red'; msg.textContent='Connection error.'; }
+}
+
+async function loadEvents() {
+  var el=document.getElementById('events-list');
+  el.innerHTML='<div class="loading">Loading...</div>';
+  try {
+    var r=await fetch(API+'/api/events?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (!d.success) { el.innerHTML='<div class="empty">Error.</div>'; return; }
+    if (d.events.length===0) { el.innerHTML='<div class="empty">No events yet. Create your first one!</div>'; return; }
+    var active=d.events.filter(function(e){return e.status!=='finished';});
+    var finished=d.events.filter(function(e){return e.status==='finished';});
+    var html='';
+    active.forEach(function(e){html+=buildEventCard(e);});
+    el.innerHTML=html||'<div class="empty">No active events.</div>';
+    var timerEvents=d.events.filter(function(e){return e.status==='active'||(e.status==='pending'&&e.reports_contact_confirmed&&e.paid);});
+    startCountdowns(timerEvents);
+    var histWrap=document.getElementById('events-history-wrap');
+    var histEl=document.getElementById('events-history');
+    if (finished.length>0) {
+      histWrap.style.display='block';
+      document.getElementById('history-toggle').textContent='▼ show ('+finished.length+')';
+      var histHtml='';
+      finished.forEach(function(e){histHtml+=buildEventCard(e);});
+      histEl.innerHTML=histHtml;
+    } else { histWrap.style.display='none'; }
+  } catch(e) { el.innerHTML='<div class="empty">Connection error.</div>'; }
+}
+
+function toggleHistory() {
+  var el=document.getElementById('events-history');
+  var toggle=document.getElementById('history-toggle');
+  var count=toggle.textContent.match(/\d+/);
+  var n=count?' ('+count[0]+')':'';
+  if (el.style.display==='none') { el.style.display='block'; toggle.textContent='▲ hide'+n; }
+  else { el.style.display='none'; toggle.textContent='▼ show'+n; }
+}
+
+function fmtCountdown(ms) {
+  var h=Math.floor(ms/3600000);
+  var m=Math.floor((ms%3600000)/60000);
+  var s=Math.floor((ms%60000)/1000);
+  return (h>0?h+':':'')+(h>0?String(m).padStart(2,'0'):m)+':'+String(s).padStart(2,'0');
+}
+
+function buildEasBox(e) {
+  var line1, line2, line3;
+  if (e.status==='finished') {
+    line1=''; line2='';
+    var finTime=e.stopped_at?new Date(e.stopped_at):new Date(e.ends_at);
+    var tz=e.timezone||'Europe/Vienna';
+    var finStr=finTime.toLocaleDateString('de-AT',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:tz})+' '+finTime.toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit',timeZone:tz});
+    var byLabels={'time_expired':'Time Expired','event_admin':'Event Admin','nickradar_admin':'nickradar Admin'};
+    var byStr=e.stopped_by?'Ended by: '+(byLabels[e.stopped_by]||e.stopped_by)+' · ':'';
+    var durMs=finTime-new Date(e.start_at);
+    var dH=Math.floor(durMs/3600000),dM=Math.floor((durMs%3600000)/60000),dS=Math.floor((durMs%60000)/1000);
+    var durStr=String(dH).padStart(2,'0')+':'+String(dM).padStart(2,'0')+':'+String(dS).padStart(2,'0');
+    line1='<div class="eas-line" style="color:#bbb;">'+(e.stopped_by?'Ended by: '+(byLabels[e.stopped_by]||e.stopped_by):'—')+'</div>';
+    line2='<div class="eas-line" style="color:#bbb;">'+finStr+'</div>';
+    line3='<div class="eas-line" style="color:#bbb;">Effective Duration: '+durStr+'</div>';
+  } else if (!e.reports_contact_confirmed) {
+    line1='<div class="eas-line" style="color:#cc6600;">⏳ Reports Contact</div>';
+    line2='<div class="eas-line" style="color:#cc6600;">⏳ Payment Verification</div>';
+    line3='<div class="eas-line" style="color:#cc6600;">⏳ Event Start</div>';
+  } else if (!e.paid) {
+    line1='<div class="eas-line" style="color:#00aa2a;">✓ Reports Contact</div>';
+    line2='<div class="eas-line" style="color:#cc6600;">⏳ Payment Verification</div>';
+    line3='<div class="eas-line" style="color:#cc6600;">⏳ Event Start</div>';
+  } else if (e.status==='pending') {
+    line1='<div class="eas-line" style="color:#00aa2a;">✓ Reports Contact</div>';
+    line2='<div class="eas-line" style="color:#00aa2a;">✓ Payment Verification</div>';
+    line3='<div class="eas-line" id="eas-timer-'+e.id+'" style="color:#cc6600;">...</div>';
+  } else {
+    line1='<div class="eas-line" style="color:#00aa2a;">✓ Reports Contact</div>';
+    line2='<div class="eas-line" style="color:#00aa2a;">✓ Payment Verification</div>';
+    line3='<div class="eas-line" id="eas-timer-'+e.id+'" style="color:#00aa2a;">...</div>';
+  }
+  var liveBadge=(e.status==='active')?'<div style="font-size:10px;font-weight:bold;letter-spacing:3px;color:#000;background:#00ff41;padding:2px 8px;margin-bottom:6px;display:inline-block;">● LIVE</div>':'';
+  return '<div class="eas-box">'+liveBadge+line1+line2+line3+'</div>';
+}
+
+function buildEventCard(e) {
+  var sLabel;
+  if (e.status==='active') { sLabel='ACTIVE'; }
+  else if (e.status==='finished') { sLabel='FINISHED'; }
+  else if (e.status==='pending') {
+    if (!e.reports_contact_confirmed||!e.paid) { sLabel='PENDING — Reports Contact & Payment required'; }
+    else { sLabel='READY'; }
+  } else { sLabel=e.status.toUpperCase(); }
+  var tz=e.timezone||'Europe/Vienna';
+  var tzAbbrs={'Europe/Vienna':'CET','Europe/Berlin':'CET','Europe/London':'GMT','Europe/Paris':'CET','Europe/Rome':'CET','Europe/Madrid':'CET','Europe/Amsterdam':'CET','Europe/Zurich':'CET','Europe/Warsaw':'CET','Europe/Stockholm':'CET','Europe/Helsinki':'EET','Europe/Athens':'EET','Europe/Lisbon':'WET','Europe/Moscow':'MSK','Europe/Istanbul':'TRT','America/New_York':'ET','America/Chicago':'CT','America/Denver':'MT','America/Los_Angeles':'PT','America/Toronto':'ET','America/Vancouver':'PT','America/Mexico_City':'CT','America/Sao_Paulo':'BRT','America/Buenos_Aires':'ART','America/Bogota':'COT','Asia/Dubai':'GST','Asia/Kolkata':'IST','Asia/Bangkok':'ICT','Asia/Singapore':'SGT','Asia/Shanghai':'CST','Asia/Tokyo':'JST','Asia/Seoul':'KST','Australia/Sydney':'AEST','Pacific/Auckland':'NZST','Africa/Cairo':'EET','Africa/Johannesburg':'SAST','Africa/Lagos':'WAT','Africa/Nairobi':'EAT'};
+  var tzLabel=tzAbbrs[tz]||tz;
+  var startStr=new Date(e.start_at).toLocaleString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:tz});
+  var endsStr=new Date(e.ends_at).toLocaleString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:tz});
+  var stoppedBy=e.stopped_by?'<span style="font-size:10px;color:#bbb;letter-spacing:1px;">ended by: '+e.stopped_by.replace(/_/g,' ')+'</span>':'';
+  var ready=e.reports_contact_confirmed&&e.paid;
+  var leftActions='';
+  if (ready) {
+    leftActions+='<button class="btn-action" onclick="loadParticipantList('+e.id+')">Participant List</button>';
+  } else {
+    leftActions+='<button class="btn-action" style="color:#bbb;border-color:#eee;cursor:default;">Participant List — PENDING</button>';
+  }
+  if (e.status==='active'&&ready) {
+    leftActions+='<input type="number" id="add-qty-'+e.id+'" placeholder="qty" min="5" oninput="updateAddPrice('+e.id+')" class="btn-action-input">'
+      +'<span id="add-price-'+e.id+'" style="font-size:10px;color:#999;white-space:nowrap;"></span>'
+      +'<button class="btn-action btn-action-buy" onclick="doAddStickers('+e.id+')">'
+      +'ADD STICKERS — BUY NOW&nbsp;&nbsp;<img src="https://upload.wikimedia.org/wikipedia/commons/b/ba/Stripe_Logo%2C_revised_2016.svg" style="height:12px;opacity:0.5;vertical-align:middle;" />'
+      +'</button>'
+      +'<span id="add-msg-'+e.id+'" style="font-size:10px;"></span>';
+  }
+  var rightActions='';
+  if (e.status==='active') { rightActions='<button class="btn-action btn-action-stop" onclick="doStopEvent('+e.id+')">⚠ STOP EVENT</button>'; }
+  var contactInfo=e.reports_contact_name
+    ?'<span>Reports Contact: <strong>'+e.reports_contact_name+'</strong> '+e.reports_contact_phone+(e.reports_contact_confirmed?' <span style="color:green;font-size:9px;">✓</span>':' <span style="color:#cc6600;font-size:9px;">⏳</span>')+'</span>'
+    :'';
+  return '<div class="event-card">'
+    +'<div class="event-card-head">'
+    +'<div class="event-card-name">'+e.event_name+'</div>'
+    +'<div style="font-size:9px;color:#bbb;letter-spacing:2px;margin-top:2px;">'+('EV-'+String(e.id).padStart(8,'0'))+'</div>'
+    +buildEasBox(e)
+    +'</div>'
+    +'<div class="event-card-body">'
+    +'<span>'+startStr+' – '+endsStr+' <span style="color:#bbb;font-size:10px;">('+tzLabel+')</span></span>'
+    +'<span>Stickers: <strong>'+e.sticker_count+'</strong></span>'
+    +'<span>Activated: <strong>'+e.activated_count+'</strong></span>'
+    +'<span>Connections: <strong>'+e.connection_count+'</strong></span>'
+    +contactInfo
+    +stoppedBy
+    +'</div>'
+    +'<div class="event-card-actions">'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex:1;">'+leftActions+'</div>'
+    +(rightActions?'<div style="margin-left:auto;padding-left:12px;">'+rightActions+'</div>':'')
+    +'</div>'
+    +'</div>';
+}
+
+function startCountdowns(events) {
+  if (window._cdInterval) clearInterval(window._cdInterval);
+  window._cdInterval = setInterval(function() {
+    events.forEach(function(e) {
+      var el=document.getElementById('eas-timer-'+e.id);
+      if (!el) return;
+      if (e.status==='active') {
+        var remaining=new Date(e.ends_at)-new Date();
+        if (remaining<=0) { el.textContent='ENDED'; el.style.color='#cc0000'; return; }
+        el.textContent=fmtCountdown(remaining)+' remaining';
+        el.style.color=remaining<10*60*1000?'#cc0000':'#00aa2a';
+      } else if (e.status==='pending') {
+        var until=new Date(e.start_at)-new Date();
+        if (until<=0) { el.textContent='⚠ Start overdue — refresh'; el.style.color='#cc0000'; return; }
+        el.textContent=fmtCountdown(until)+' until start';
+        el.style.color='#cc6600';
+      }
+    });
+  }, 1000);
+}
+
+async function doAddStickers(eventId) {
+  var qty=parseInt(document.getElementById('add-qty-'+eventId).value);
+  var msg=document.getElementById('add-msg-'+eventId);
+  if (!qty||qty<5) { msg.style.color='red'; msg.textContent='Min. 5'; return; }
+  try {
+    var r=await fetch(API+'/api/events/'+eventId+'/stickers/add', {method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({quantity:qty})});
+    var d=await r.json();
+    if (!d.success) { msg.style.color='red'; msg.textContent=d.error; return; }
+    msg.style.color='green'; msg.textContent='✓ '+d.added+' added';
+    setTimeout(loadEvents, 1200);
+  } catch(e) { msg.style.color='red'; msg.textContent='Error.'; }
+}
+
+function updateAddPrice(eventId) {
+  var qty=parseInt(document.getElementById('add-qty-'+eventId).value);
+  var el=document.getElementById('add-price-'+eventId);
+  if (!qty||qty<5) { el.textContent=qty>0?'min. 5':''; return; }
+  var price=calcPrice(qty);
+  el.textContent=qty+' × €'+(price/qty).toFixed(2)+' = €'+price.toFixed(2);
+}
+
+async function doStopEvent(eventId) {
+  if (!confirm('STOP this event permanently?\n\nAll participant data will be deleted immediately.\nThis cannot be undone.\n\nPaid amounts for unused activations will not be refunded.')) return;
+  try {
+    var r=await fetch(API+'/api/events/'+eventId+'/stop', {method:'POST',headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (d.success) loadEvents(); else alert('Error: '+d.error);
+  } catch(e) { alert('Connection error.'); }
+}
+
+async function loadParticipantList(eventId) {
+  document.querySelectorAll('.content').forEach(function(c){c.classList.remove('active');});
+  document.getElementById('tab-participantlist').classList.add('active');
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
+  var el=document.getElementById('participantlist-content');
+  el.innerHTML='<div class="loading">Loading...</div>';
+  try {
+    var r=await fetch(API+'/api/events/'+eventId+'?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (!d.success) { el.innerHTML='<div class="empty">Error.</div>'; return; }
+    var e=d.event, stickers=d.stickers;
+    var connMap={};
+    if (e.status==='active') {
+      try {
+        var rc=await fetch(API+'/api/events/'+eventId+'/connections', {headers:{Authorization:'Bearer '+token}});
+        var dc=await rc.json();
+        if (dc.success) {
+          dc.connections.forEach(function(c){
+            if (!connMap[c.seeker_id]) connMap[c.seeker_id]=[];
+            if (!connMap[c.target_id]) connMap[c.target_id]=[];
+            connMap[c.seeker_id].push(c.target_nick);
+            connMap[c.target_id].push(c.seeker_nick);
+          });
+        }
+      } catch(ex){}
+    }
+    var startStr=new Date(e.start_at).toLocaleString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:e.timezone||'Europe/Vienna'});
+    var endsStr=new Date(e.ends_at).toLocaleString('en-GB',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:e.timezone||'Europe/Vienna'});
+    var html='<div style="margin-bottom:20px;">'
+      +'<div style="font-size:14px;font-weight:bold;letter-spacing:3px;margin-bottom:6px;">'+e.event_name+'</div>'
+      +'<div style="font-size:11px;color:#999;letter-spacing:1px;margin-bottom:8px;">'+startStr+' – '+endsStr+'</div>'
+      +'<div style="font-size:11px;color:#666;letter-spacing:1px;margin-bottom:12px;">Stickers: <strong>'+e.sticker_count+'</strong> · Activated: <strong>'+e.activated_count+'</strong> · Connections: <strong>'+e.connection_count+'</strong></div>'
+      +'<a href="'+API+'/api/events/'+eventId+'/print?token='+token+'" target="_blank" style="text-decoration:none;"><button class="btn-outline">🖨 Print Stickers</button></a>'
+      +'<button class="btn-outline" onclick="loadParticipantList('+eventId+')" style="margin-left:8px;">↻ Refresh</button>'
+      +'</div>';
+    html+='<div class="participant-list-grid">';
+    var perRow=3, total=stickers.length;
+    var filled=total%perRow===0?total:total+(perRow-(total%perRow));
+    for (var i=0;i<filled;i++) {
+      if (i<stickers.length) {
+        var s=stickers[i];
+        var isInactive=s.status==='invalidated'||s.status==='blocked';
+        var sLabel={unused:'not activated',active:'active',invalidated:'invalidated',blocked:'blocked'}[s.status]||s.status;
+        var sClass=s.status==='active'?'participant-status online':'participant-status';
+        var invBtn=s.status!=='invalidated'?'<button class="participant-inv-btn" onclick="doInvalidateSticker('+s.id+','+eventId+')" title="Invalidate">✕</button>':'';
+        var connHtml='';
+        if (s.status==='active'&&connMap[s.id]&&connMap[s.id].length>0) {
+          var connList=connMap[s.id], uid='conn-'+s.id;
+          connHtml='<div style="font-size:9px;color:#bbb;border-top:1px solid #eee;margin-top:4px;padding-top:4px;">'
+            +connList.length+' connection'+(connList.length>1?'s':'')+' → '
+            +'<span style="color:#000;text-decoration:underline;cursor:pointer;" onclick="document.getElementById(\''+uid+'\').style.display=document.getElementById(\''+uid+'\').style.display===\'none\'?\'block\':\'none\'">show</span>'
+            +'<div id="'+uid+'" style="display:none;margin-top:3px;line-height:1.8;">'+connList.map(function(n){return '↔ '+n;}).join('<br>')+'</div></div>';
+        }
+        html+='<div class="participant-cell'+(isInactive?' inactive-cell':'')+'">'+invBtn+'<div class="participant-nick">'+s.nickname+'</div><div class="participant-code">'+s.code+'</div><div class="'+sClass+'">'+sLabel+'</div>'+connHtml+'</div>';
+      } else { html+='<div class="participant-cell empty-cell"></div>'; }
+    }
+    html+='</div>';
+    el.innerHTML=html;
+  } catch(e) { el.innerHTML='<div class="empty">Connection error.</div>'; }
+}
+
+async function doInvalidateSticker(stickerId, eventId) {
+  if (!confirm('Invalidate this sticker?\nParticipant will be logged out. Issue a new sticker if needed.')) return;
+  try {
+    var r=await fetch(API+'/api/stickers/'+stickerId+'/invalidate', {method:'POST',headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (d.success) loadParticipantList(eventId); else alert('Error: '+d.error);
+  } catch(e) { alert('Connection error.'); }
+}
+
+async function loadInvoices() {
+  var el=document.getElementById('invoices-content');
+  el.innerHTML='<div class="loading">Loading...</div>';
+  try {
+    var r=await fetch(API+'/api/events/invoices?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (!d.success) { el.innerHTML='<div class="empty">Error.</div>'; return; }
+    if (d.invoices.length===0) { el.innerHTML='<div class="empty">No invoices yet. Invoices are generated automatically when an event ends.</div>'; return; }
+    var html='<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#000;color:#fff;">'
+      +'<th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:2px;">No.</th>'
+      +'<th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:2px;">Event</th>'
+      +'<th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:2px;">Date</th>'
+      +'<th style="padding:8px 10px;text-align:right;font-size:10px;letter-spacing:2px;">Stickers</th>'
+      +'<th style="padding:8px 10px;text-align:right;font-size:10px;letter-spacing:2px;">Total</th>'
+      +'<th style="padding:8px 10px;text-align:center;font-size:10px;letter-spacing:2px;">Invoice</th>'
+      +'</tr></thead><tbody>';
+    d.invoices.forEach(function(inv){
+      var dateStr=new Date(inv.created_at).toLocaleDateString('de-AT',{day:'2-digit',month:'2-digit',year:'numeric'});
+      html+='<tr style="border-bottom:1px solid #eee;">'
+        +'<td style="padding:8px 10px;font-weight:bold;">'+esc(inv.invoice_number)+'</td>'
+        +'<td style="padding:8px 10px;">'+esc(inv.event_name||'—')+'</td>'
+        +'<td style="padding:8px 10px;color:#999;">'+dateStr+'</td>'
+        +'<td style="padding:8px 10px;text-align:right;">'+inv.total_quantity+'</td>'
+        +'<td style="padding:8px 10px;text-align:right;font-weight:bold;">€'+parseFloat(inv.grand_total).toFixed(2)+'</td>'
+        +'<td style="padding:8px 10px;text-align:center;"><a href="'+API+'/api/events/'+inv.event_id+'/invoice?token='+token+'" target="_blank" style="color:#000;font-size:11px;letter-spacing:1px;">🧾 Open</a></td>'
+        +'</tr>';
+    });
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  } catch(e) { el.innerHTML='<div class="empty">Connection error.</div>'; }
+}
+
+async function loadAccount() {
+  var el=document.getElementById('account-content');
+  el.innerHTML='<div class="loading">Loading...</div>';
+  try {
+    var r=await fetch(API+'/api/event-admin/me?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (!d.success) { el.innerHTML='<div class="empty">Error.</div>'; return; }
+    var a=d.admin;
+    var ro='background:#f5f5f5;color:#999;';
+    var bTypeLabels={agency_promoter:'Agency / Promoter',club_bar_lounge:'Club / Bar / Lounge',conference_congress:'Conference / Congress',corporate_networking:'Corporate / Networking Event',cruise_travel:'Cruise / Travel Event',festival_open_air:'Festival / Open Air Organizer',hotel_resort:'Hotel / Resort / Hospitality',music_concert:'Music / Concert Venue',sports_gaming:'Sports Event / Gaming',team_building:'Team Building Event',university_campus:'University / Campus Event',other:'Other'};
+    var bTypeLabel=bTypeLabels[a.business_type]||a.business_type||'—';
+    var hasBilling=!!(a.street&&a.street_number&&a.postal_code&&a.city&&a.phone);
+    el.innerHTML='<div style="max-width:440px;">'
+      +'<div style="margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #eee;">'
+      +'<div class="form-row"><label>Customer ID</label><input type="text" value="EA-'+String(a.id).padStart(4,'0')+'" disabled style="'+ro+'" /></div>'
+      +'<div class="form-row"><label>Company Name</label><input type="text" value="'+esc(a.org_name||'')+'" disabled style="'+ro+'" /></div>'
+      +'<div class="form-row"><label>Contact Person</label><input type="text" value="'+esc(a.contact_name||'')+'" disabled style="'+ro+'" /></div>'
+      +'<div class="form-row"><label>Business Type</label><input type="text" value="'+esc(bTypeLabel)+'" disabled style="'+ro+'" /></div>'
+      +'<div class="form-row"><label>Country</label><input type="text" value="'+esc(a.country||'')+'" disabled style="'+ro+'" /></div>'
+      +'<div class="form-row"><label>Email</label><input type="email" value="'+esc(a.email)+'" disabled style="'+ro+'" /></div>'
+      +'</div>'
+      +'<div style="margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #eee;">'
+      +(hasBilling?'':'<div style="font-size:10px;color:#999;letter-spacing:1px;margin-bottom:12px;">Required for invoicing. Once saved, these cannot be changed.</div>')
+      +'<div class="form-row"><label>Street</label><input type="text" id="acc-street" value="'+esc(a.street||'')+'" '+(hasBilling?'disabled style="'+ro+'"':'')+' /></div>'+'<div class="form-row"><label>Number</label><input type="text" id="acc-street-number" value="'+esc(a.street_number||'')+'" '+(hasBilling?'disabled style="'+ro+'"':'')+' /></div>'
+      +'<div class="form-row"><label>Postal Code</label><input type="text" id="acc-postal" value="'+esc(a.postal_code||'')+'" '+(hasBilling?'disabled style="'+ro+'"':'')+' /></div>'+'<div class="form-row"><label>City</label><input type="text" id="acc-city" value="'+esc(a.city||'')+'" '+(hasBilling?'disabled style="'+ro+'"':'')+' /></div>'
+      +'<div class="form-row"><label>VAT / UID Number</label><input type="text" id="acc-vat" value="'+esc(a.vat||'')+'" '+(hasBilling?'disabled style="'+ro+'"':'')+' /></div>'
+      +'<div class="form-row"><label>Phone</label><input type="tel" id="acc-phone" value="'+esc(a.phone||'')+'" '+(hasBilling?'disabled style="'+ro+'"':'')+' /></div>'
+      +(hasBilling?'':'<div id="acc-billing-msg" style="font-size:11px;margin-bottom:8px;"></div><button class="btn-green" onclick="doSaveBilling()">Save Billing Info</button>')
+      +'</div>'
+
+      +'<div style="margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #eee;">'
+      +'<div class="section-title" style="margin-bottom:8px;">Change Password</div>'
+      +'<div class="form-row"><label>New Password (min. 8 characters)</label><input type="password" id="acc-pw1" /></div>'
+      +'<div class="form-row"><label>Repeat New Password</label><input type="password" id="acc-pw2" /></div>'
+      +'<div id="acc-pw-msg" style="font-size:11px;margin-bottom:8px;"></div>'
+      +'<button class="btn-outline" onclick="doChangePassword()">Change Password</button>'
+      +'</div>'
+      +'<div style="padding-top:8px;">'
+      +'<button class="btn-danger" onclick="doDeleteAccount()">Delete Account</button>'
+      +'</div>'
+      +'</div>';
+  } catch(e) { el.innerHTML='<div class="empty">Connection error.</div>'; }
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function doSaveBilling() {
+  var msg=document.getElementById('acc-billing-msg');
+  msg.style.color='red'; msg.textContent='';
+  var street=document.getElementById('acc-street').value.trim();
+  var streetNumber=document.getElementById('acc-street-number').value.trim();
+  var postal=document.getElementById('acc-postal').value.trim();
+  var city=document.getElementById('acc-city').value.trim();
+  var vat=document.getElementById('acc-vat').value.trim();
+  var phone=document.getElementById('acc-phone').value.trim();
+  if (!street||!streetNumber||!postal||!city||!phone) { msg.textContent='Street, number, postal code, city and phone are required.'; return; }
+  try {
+    var r=await fetch(API+'/api/event-admin/profile',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({street:street,street_number:streetNumber,postal_code:postal,city:city,vat:vat||null,phone:phone})});
+    var d=await r.json();
+    if (!d.success) { msg.textContent=d.error; return; }
+    msg.style.color='green'; msg.textContent='✓ Saved.';
+    setTimeout(function(){loadAccount();},800);
+  } catch(e) { msg.textContent='Connection error.'; }
+}
+
+async function loadReportsContact() {
+  var el=document.getElementById('reportscontact-content');
+  el.innerHTML='<div class="loading">Loading...</div>';
+  try {
+    var r=await fetch(API+'/api/event-admin/me?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (!d.success) { el.innerHTML='<div class="empty">Error.</div>'; return; }
+    var a=d.admin;
+    var defaultName=a.contact_name||'';
+    el.innerHTML='<div class="form-box">'
+      +'<div style="font-size:11px;color:#999;line-height:1.8;margin-bottom:20px;">If you would like to assign a different person as your Reports Contact for your events, you are welcome to enter their name and phone number here.<br><br>This person simply needs to be on-site and reachable by phone during your events — in case a participant submits a report that requires attention. nickradar will verify this contact via SMS before each event activation.</div>'
+      +'<div class="form-row"><label>Name</label><input type="text" id="rc-name" value="'+esc(defaultName)+'" /></div>'
+      +'<div class="form-row"><label>Phone</label><input type="tel" id="rc-phone" autocomplete="off" value="" /></div>'
+      +'<div id="rc-msg" style="font-size:11px;margin-bottom:8px;"></div>'
+      +'<button class="btn-green" onclick="doSaveReportsContact()">Save</button>'
+      +'</div>';
+  } catch(e) { el.innerHTML='<div class="empty">Connection error.</div>'; }
+}
+
+async function doSaveReportsContact() {
+  var msg=document.getElementById('rc-msg')||document.getElementById('acc-rc-msg');
+  msg.style.color='red'; msg.textContent='';
+  var nameEl=document.getElementById('rc-name')||document.getElementById('acc-rc-name');
+  var phoneEl=document.getElementById('rc-phone')||document.getElementById('acc-rc-phone');
+  var name=nameEl?nameEl.value.trim():'';
+  var phone=phoneEl?phoneEl.value.trim():'';
+  if (!name||!phone) { msg.textContent='Name and phone are required.'; return; }
+  try {
+    var r=await fetch(API+'/api/event-admin/reports-contact',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({reports_contact_name:name,reports_contact_phone:phone})});
+    var d=await r.json();
+    if (!d.success) { msg.textContent=d.error; return; }
+    msg.style.color='green'; msg.textContent='✓ Saved.';
+  } catch(e) { msg.textContent='Connection error.'; }
+}
+
+async function doChangePassword() {
+  var msg=document.getElementById('acc-pw-msg');
+  msg.style.color='red'; msg.textContent='';
+  var pw1=document.getElementById('acc-pw1').value;
+  var pw2=document.getElementById('acc-pw2').value;
+  if (!pw1||!pw2) { msg.textContent='Please fill both fields.'; return; }
+  if (pw1.length<8) { msg.textContent='Min. 8 characters.'; return; }
+  if (pw1!==pw2) { msg.textContent='Passwords do not match.'; return; }
+  try {
+    var r=await fetch(API+'/api/event-admin/password',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({new_password:pw1,confirm_password:pw2})});
+    var d=await r.json();
+    if (!d.success) { msg.textContent=d.error; return; }
+    msg.style.color='green'; msg.textContent='✓ Password changed.';
+    document.getElementById('acc-pw1').value='';
+    document.getElementById('acc-pw2').value='';
+  } catch(e) { msg.textContent='Connection error.'; }
+}
+
+async function doDeleteAccount() {
+  if (!confirm('Delete your account?\n\nThis cannot be undone.')) return;
+  try {
+    var r=await fetch(API+'/api/event-admin/account', {method:'DELETE',headers:{Authorization:'Bearer '+token}});
+    var d=await r.json();
+    if (d.success) { doLogout(); } else alert('Error: '+d.error);
+  } catch(e) { alert('Connection error.'); }
+}
+</script>
+</body>
+</html>
