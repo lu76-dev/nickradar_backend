@@ -415,16 +415,29 @@ async function checkRcStatus() {
     var r = await fetch(API+'/api/event-admin/me?t='+Date.now(), {headers:{Authorization:'Bearer '+token}});
     var d = await r.json();
     var hasRc = d.success && d.admin.reports_contact_name && d.admin.reports_contact_phone;
+    box.innerHTML = '';
     if (!hasRc) {
       box.style.background = '#fff5f5';
       box.style.border = '1px solid #ffcccc';
       box.style.color = '#cc0000';
-      box.innerHTML = "&#9888; Reports Contact not set. <strong style='cursor:pointer;text-decoration:underline;' onclick='showTab("reportscontact")'>Set it now</strong> before creating an event.";
+      var link = document.createElement('strong');
+      link.textContent = 'Set it now';
+      link.style.cssText = 'cursor:pointer;text-decoration:underline;';
+      link.addEventListener('click', function(){ showTab('reportscontact'); });
+      box.appendChild(document.createTextNode('⚠ Reports Contact not set. '));
+      box.appendChild(link);
+      box.appendChild(document.createTextNode(' before creating an event.'));
     } else {
       box.style.background = '#f7f7f7';
       box.style.border = '1px solid #eee';
       box.style.color = '#999';
-      box.innerHTML = "Reports Contact from your account profile will be used automatically. <strong style='color:#000;cursor:pointer;' onclick='showTab("reportscontact")'>Make sure it is set.</strong>";
+      var link2 = document.createElement('strong');
+      link2.textContent = 'Reports Contact';
+      link2.style.cssText = 'color:#000;cursor:pointer;';
+      link2.addEventListener('click', function(){ showTab('reportscontact'); });
+      box.appendChild(document.createTextNode('Reports Contact from your account profile will be used automatically. Make sure it is set in '));
+      box.appendChild(link2);
+      box.appendChild(document.createTextNode(' before creating an event.'));
     }
   } catch(e) {}
 }
