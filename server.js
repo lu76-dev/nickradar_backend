@@ -1184,6 +1184,56 @@ app.get('/api/admin/invoices', requireAdminKey, async (req, res) => {
     res.status(500).json({ success: false, error: 'server error' });
   }
 });
+app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key&&req.query.key===ADMIN_KEY){return next();}requireAdminKey(req,res,next);},  async (req, res) => {
+  try {
+    const eventResult = await pool.query('SELECT * FROM event WHERE id = $1', [req.params.id]);
+    if (eventResult.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    const e = eventResult.rows[0];
+    const adminResult = await pool.query('SELECT * FROM event_admin WHERE id = $1', [e.admin_id]);
+    if (adminResult.rows.length === 0) return res.status(404).json({ success: false, error: 'admin not found' });
+    const a = adminResult.rows[0];
+    const invoiceResult = await pool.query('SELECT * FROM invoice WHERE event_id = $1 ORDER BY created_at ASC', [req.params.id]);
+    if (invoiceResult.rows.length === 0) return res.status(404).json({ success: false, error: 'no invoice found' });
+    const inv = invoiceResult.rows[0];
+    const packagesResult = await pool.query('SELECT * FROM sticker_package WHERE event_id = $1 ORDER BY created_at ASC', [req.params.id]);
+    const packages = packagesResult.rows;
+    const tz = e.timezone || 'Europe/Vienna';
+    const tzLabel = tzAbbr(tz);
+    const startDateStr = new Date(e.start_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const startTime = new Date(e.start_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const endDateStr = new Date(e.ends_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const endTime = new Date(e.ends_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const invoiceDate = new Date(inv.created_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const durationMs = e.stopped_at ? new Date(e.stopped_at) - new Date(e.start_at) : new Date(e.ends_at) - new Date(e.start_at);
+    const durationH = Math.floor(durationMs / 3600000);
+    const durationM = Math.floor((durationMs % 3600000) / 60000);
+    const durationS = Math.floor((durationMs % 60000) / 1000);
+    const durationStr = String(durationH).padStart(2, '0') + ':' + String(durationM).padStart(2, '0') + ':' + String(durationS).padStart(2, '0');
+    const stoppedByMap = { time_expired: 'Time expired', event_admin: 'Event Admin', nickradar_admin: 'nickradar Admin' };
+    const stoppedAtStr = e.stopped_at ? new Date(e.stopped_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' + new Date(e.stopped_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz }) : '';
+    const stoppedByStr = (stoppedByMap[e.stopped_by] || '—') + (stoppedAtStr ? ' &nbsp;·&nbsp; ' + stoppedAtStr : '');
+    const paymentStatus = inv.paid_at ? `<span style="color:green;font-weight:bold;">✓ Paid &nbsp;·&nbsp; ${inv.payment_provider || '—'}${inv.payment_id ? ' ···· ' + inv.payment_id.slice(-4) : ''} &nbsp;·&nbsp; ${new Date(inv.paid_at).toLocaleDateString('de-AT')}</span>` : `<span style="color:#cc6600;font-weight:bold;">⏳ Pending</span>`;
+    let grandTotal = 0;
+    let posRows = '';
+    packages.forEach(function(p, i) {
+      const qty = p.quantity;
+      const lineTotal = calcPrice(qty);
+      const up = lineTotal / qty;
+      grandTotal += lineTotal;
+      const pkgDate = new Date(p.created_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+      const pkgTime = new Date(p.created_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+      const desc = i === 0 ? 'Nickname Sticker Package &nbsp;·&nbsp; Initial Order' : 'Nickname Sticker Package &nbsp;·&nbsp; Additional Order';
+      posRows += `<tr><td>${i + 1}</td><td>${desc}<br><small style="color:#999;">${e.event_name} &nbsp;·&nbsp; ${pkgDate} ${pkgTime} (${tzLabel})</small></td><td style="text-align:right;">${qty}</td><td style="text-align:right;">€${up.toFixed(2)}</td><td style="text-align:right;font-weight:bold;">€${lineTotal.toFixed(2)}</td></tr>`;
+    });
+    const html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>Invoice ${inv.invoice_number}</title><link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Share Tech Mono','Courier New',monospace;font-size:12px;color:#000;background:#fff;padding:20mm;max-width:210mm;margin:0 auto;}.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12mm;}.logo-wrap{display:flex;align-items:center;gap:10px;}.logo-img{height:38px;width:auto;}.logo-text{font-size:22px;font-weight:bold;letter-spacing:4px;}.sender-info{font-size:10px;color:#999;margin-top:8px;line-height:1.8;}.invoice-meta{text-align:right;font-size:11px;line-height:1.8;}.inv-title{font-size:18px;font-weight:bold;letter-spacing:3px;margin-bottom:2px;}.inv-sub{font-size:10px;color:#999;letter-spacing:2px;margin-bottom:8px;}.addresses{margin-bottom:10mm;}.address-block{font-size:11px;line-height:1.8;}.label{font-size:9px;letter-spacing:2px;color:#999;text-transform:uppercase;margin-bottom:4px;}.event-info{background:#f5f5f5;padding:8px 12px;margin-bottom:8mm;font-size:11px;line-height:1.8;border-left:3px solid #000;}table{width:100%;border-collapse:collapse;margin-bottom:8mm;}thead tr{background:#000;color:#fff;}th{padding:7px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;}th:nth-child(3),th:nth-child(4),th:nth-child(5){text-align:right;}td{padding:8px 10px;border-bottom:1px solid #eee;vertical-align:top;font-size:11px;}td small{font-size:10px;}.total-box{display:flex;justify-content:flex-end;margin-bottom:8mm;}.total-table{width:220px;}.total-table td{padding:4px 10px;border:none;font-size:11px;}.total-table .grand{font-weight:bold;font-size:14px;border-top:2px solid #000;padding-top:8px;}.payment-box{border:1px solid #eee;padding:10px 14px;margin-bottom:8mm;font-size:11px;line-height:1.8;}.footer{border-top:1px solid #eee;padding-top:6mm;font-size:10px;color:#999;line-height:1.7;}.print-btn{position:fixed;top:16px;right:16px;background:#000;color:#fff;border:none;padding:8px 20px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:2px;}@media print{.print-btn{display:none;}body{padding:15mm;}}</style></head><body><button class="print-btn" onclick="window.print()">Print</button><div class="header"><div><div class="logo-wrap"><img class="logo-img" src="https://app.nickradar.com/nr_logo.png" alt="nickradar" /><span class="logo-text">nickradar</span></div><div class="sender-info">Badhausstrasse 3<br>6080 Innsbruck-Igls&#8239;·&#8239;Austria<br>info@nickradar.com&#8239;·&#8239;nickradar.com</div></div><div class="invoice-meta"><div class="inv-title">RECHNUNG</div><div class="inv-sub">INVOICE</div><div style="font-weight:bold;letter-spacing:2px;">${inv.invoice_number}</div><div style="margin-top:6px;color:#999;">Date: ${invoiceDate}</div><div style="margin-top:4px;color:#999;">Customer ID: ${formatCustomerId(a.id)}</div></div></div><div class="addresses"><div class="address-block"><div class="label">Rechnungsempfänger / Bill To</div><strong>${a.org_name || ''}</strong><br>${a.street ? a.street + (a.street_number ? ' ' + a.street_number : '') + '<br>' : ''}${a.postal_code || a.city ? (a.postal_code || '') + ' ' + (a.city || '') + '<br>' : ''}${a.country ? a.country + '<br>' : ''}${a.vat ? 'UID / VAT: ' + a.vat : ''}</div></div><div class="event-info"><div class="label">Event ID: ${formatEventId(e.id)} &nbsp;·&nbsp; Event Name: ${e.event_name}</div>From ${startDateStr} ${startTime} &nbsp; To ${endDateStr} ${endTime} &nbsp;·&nbsp; Timezone Event Location: ${tzLabel}<br>Ended by: ${stoppedByMap[e.stopped_by]||'—'} &nbsp; on &nbsp; ${stoppedAtStr} &nbsp;·&nbsp; Effective event duration: ${durationStr}</div><table><thead><tr><th style="width:30px;">Pos.</th><th>Beschreibung / Description</th><th style="width:60px;">Menge / Qty</th><th style="width:90px;">Preis/Stk / Unit</th><th style="width:90px;">Gesamt / Total</th></tr></thead><tbody>${posRows}</tbody></table><div class="total-box"><table class="total-table"><tr><td>Zwischensumme / Subtotal</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr><tr><td style="font-size:10px;color:#999;">MwSt. / VAT (0%)*</td><td style="text-align:right;font-size:10px;color:#999;">€0.00</td></tr><tr class="grand"><td>Gesamtbetrag / Total</td><td style="text-align:right;">€${grandTotal.toFixed(2)}</td></tr></table></div><div class="payment-box"><div class="label">Zahlungsinformation / Payment Info</div>${paymentStatus}</div><div class="footer">* Gemäß §6 Abs. 1 Z 27 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).<br>&nbsp;&nbsp;In accordance with §6 para. 1 no. 27 Austrian VAT Act, no VAT is charged (small business regulation.).</div></body></html>`;
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('Admin invoice error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 
 app.get('/api/admin/reports', requireAdminKey, async (req, res) => {
   try {
@@ -1209,7 +1259,7 @@ app.post('/api/admin/stickers/:id/invalidate', requireAdminKey, async (req, res)
 // ============================================================
 
 app.get('/', (req, res) => {
-  res.json({ message: 'nickradar API v6.3.7', status: 'running' });
+  res.json({ message: 'nickradar API v6.3.8', status: 'running' });
 });
 
 // ============================================================
@@ -1260,7 +1310,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.3.7 running on port ${PORT}`);
+  console.log(`nickradar API v6.3.8 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1362,7 +1412,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
 
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.3.7 ready');
+    console.log('DB schema v6.3.8 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
