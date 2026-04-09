@@ -620,6 +620,25 @@ app.get('/api/events/:id', requireEventAdminAuth, async (req, res) => {
   }
 });
 
+app.get('/api/events/:id/reports', requireEventAdminAuth, async (req, res) => {
+  try {
+    const check = await pool.query('SELECT id FROM event WHERE id = $1 AND admin_id = $2', [req.params.id, req.adminId]);
+    if (check.rows.length === 0) return res.status(403).json({ success: false, error: 'forbidden' });
+    const result = await pool.query(
+      `SELECT r.id, s1.nickname as reporter_nickname, s2.nickname as reported_nickname,
+              r.reason, r.details, r.created_at, r.resolved, r.resolved_at
+       FROM report r
+       JOIN sticker s1 ON r.reporter_id = s1.id
+       JOIN sticker s2 ON r.reported_id = s2.id
+       WHERE r.event_id = $1 ORDER BY r.created_at DESC`,
+      [req.params.id]
+    );
+    res.json({ success: true, reports: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.get('/api/events/:id/connections', requireEventAdminAuth, async (req, res) => {
   try {
     const event = await pool.query(
@@ -1114,9 +1133,15 @@ app.post('/api/reports', requireParticipantSession, async (req, res) => {
     if (reported.rows.length === 0) return res.status(404).json({ success: false, error: 'participant not found' });
     await pool.query('INSERT INTO report (reporter_id, reported_id, event_id, reason, details, created_at) VALUES ($1, $2, $3, $4, $5, NOW())', [req.session.sticker_id, reported.rows[0].id, req.session.event_id, reason, details || null]);
     const adminResult = await pool.query('SELECT email, org_name FROM event_admin WHERE id = $1', [reported.rows[0].admin_id]);
+    const eventResult2 = await pool.query('SELECT event_name FROM event WHERE id = $1', [req.session.event_id]);
+    const eventName2 = eventResult2.rows[0]?.event_name || '—';
+    const reporterNick = req.session.nickname;
+    const reportedNick = reported.rows[0].nickname;
+    const emailBody = `A report was submitted at your event.\n\nEvent: ${eventName2}\nFrom: ${reporterNick}\nAbout: ${reportedNick}\nReason: ${reason}\nDetails: ${details || '-'}\nTime: ${new Date().toISOString()}\n\nPlease contact your Reports Contact on-site.\n\nnickradar`;
     if (adminResult.rows.length > 0) {
-      sendEmail(adminResult.rows[0].email, 'nickradar: Report received at your event', `Hello ${adminResult.rows[0].org_name},\n\nA report was submitted at your event.\n\nReported participant: ${reported.rows[0].nickname}\nReason: ${reason}\nDetails: ${details || '-'}\n\nPlease respond on-site.\n\nnickradar`);
+      sendEmail(adminResult.rows[0].email, `⚠ nickradar: Report at ${eventName2}`, emailBody);
     }
+    sendEmail(process.env.EMAIL_USER, `⚠ nickradar: Report at ${eventName2}`, emailBody);
     res.status(201).json({ success: true });
   } catch (err) {
     console.error('Report error:', err);
@@ -1338,10 +1363,28 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
 });
 
 
+app.put('/api/reports/:id/resolve', requireEventAdminAuth, async (req, res) => {
+  try {
+    await pool.query('UPDATE report SET resolved = TRUE, resolved_at = NOW() WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.get('/api/admin/reports', requireAdminKey, async (req, res) => {
   try {
-    const result = await pool.query(`SELECT r.*, s1.nickname as reporter_nickname, s2.nickname as reported_nickname, e.event_name FROM report r JOIN sticker s1 ON r.reporter_id = s1.id JOIN sticker s2 ON r.reported_id = s2.id JOIN event e ON r.event_id = e.id ORDER BY r.created_at DESC`);
+    const result = await pool.query(`SELECT r.*, s1.nickname as reporter_nickname, s2.nickname as reported_nickname, e.event_name, ea.org_name as admin_org FROM report r JOIN sticker s1 ON r.reporter_id = s1.id JOIN sticker s2 ON r.reported_id = s2.id JOIN event e ON r.event_id = e.id JOIN event_admin ea ON e.admin_id = ea.id ORDER BY r.resolved ASC, r.created_at DESC`);
     res.json({ success: true, reports: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.put('/api/admin/reports/:id/resolve', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query('UPDATE report SET resolved = TRUE, resolved_at = NOW() WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
   }
@@ -1374,6 +1417,7 @@ async function finishEvent(eid, stoppedBy) {
   await pool.query("UPDATE session SET expires_at = NOW() WHERE event_id = $1", [eid]);
   await pool.query("UPDATE chat SET status = 'finished' WHERE event_id = $1 AND status = 'active'", [eid]);
   await pool.query("DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE event_id = $1)", [eid]);
+  await pool.query("DELETE FROM report WHERE event_id = $1", [eid]);
   try {
     const eventResult = await pool.query('SELECT * FROM event WHERE id = $1', [eid]);
     if (eventResult.rows.length === 0) return;
@@ -1413,7 +1457,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.4.16 running on port ${PORT}`);
+  console.log(`nickradar API v6.4.17 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1515,13 +1559,15 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
 
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS rc_confirm_token VARCHAR(64)`);
+    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_start_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_end_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.16 ready');
+    console.log('DB schema v6.4.17 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
