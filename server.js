@@ -449,12 +449,9 @@ app.delete('/api/event-admin/account', requireEventAdminAuth, async (req, res) =
 // ============================================================
 
 app.post('/api/events', requireEventAdminAuth, async (req, res) => {
-  const { event_name, org_name, start_at, sticker_count, timezone, reports_contact_name, reports_contact_phone, terms_accepted_at, terms_version } = req.body;
+  const { event_name, org_name, start_at, sticker_count, timezone, terms_accepted_at, terms_version } = req.body;
   if (!event_name || !start_at || !sticker_count) {
     return res.status(400).json({ success: false, error: 'event_name, start_at, sticker_count required' });
-  }
-  if (!reports_contact_name || !reports_contact_phone) {
-    return res.status(400).json({ success: false, error: 'reports contact name and phone are required' });
   }
   if (!terms_accepted_at) {
     return res.status(400).json({ success: false, error: 'terms acceptance required' });
@@ -475,12 +472,10 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
     const startDate = localToUTC(start_at, tz);
     const endsAt = new Date(startDate.getTime() + 8 * 60 * 60 * 1000);
 
-    const rcConfirmToken = require('crypto').randomBytes(32).toString('hex');
-
     const eventResult = await pool.query(
-      `INSERT INTO event (admin_id, event_name, org_name, start_at, ends_at, timezone, status, reports_contact_name, reports_contact_phone, reports_contact_confirmed, paid, sticker_count, activated_count, connection_count, terms_accepted_at, terms_accepted_ip, terms_version, rc_confirm_token, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, FALSE, FALSE, $9, 0, 0, $10, $11, $12, $13, NOW()) RETURNING *`,
-      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, reports_contact_name.trim(), reports_contact_phone.trim(), count, new Date(terms_accepted_at), termsIp, termsVer, rcConfirmToken]
+      `INSERT INTO event (admin_id, event_name, org_name, start_at, ends_at, timezone, status, paid, sticker_count, activated_count, connection_count, terms_accepted_at, terms_accepted_ip, terms_version, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', FALSE, $7, 0, 0, $8, $9, $10, NOW()) RETURNING *`,
+      [req.adminId, event_name.trim(), (org_name || admin.org_name).trim(), startDate, endsAt, tz, count, new Date(terms_accepted_at), termsIp, termsVer]
     );
     const event = eventResult.rows[0];
 
@@ -497,7 +492,6 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
 
     const totalPrice = calcPrice(count).toFixed(2);
     const startFormatted = startDate.toISOString().replace('T', ' ').slice(0, 16) + ' ' + tzAbbr(tz);
-    const rcConfirmLink = process.env.APP_URL.replace('events.', 'app.') + '/api/events/confirm-rc?token=' + rcConfirmToken;
     const emailLines = [
       'Hello ' + admin.org_name + ',',
       '',
@@ -540,31 +534,6 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
   }
 });
 
-app.get('/api/events/confirm-rc', async (req, res) => {
-  const { token } = req.query;
-  if (!token) return res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;"><h2 style="color:red;">Invalid link.</h2></body></html>');
-  try {
-    const result = await pool.query(
-      "SELECT id, event_name, reports_contact_confirmed FROM event WHERE rc_confirm_token = $1 AND status IN ('pending','active')",
-      [token]
-    );
-    if (result.rows.length === 0) {
-      return res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;background:#fff;"><h2 style="color:#cc0000;">Link invalid or already used.</h2></body></html>');
-    }
-    const ev = result.rows[0];
-    if (ev.reports_contact_confirmed) {
-      return res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;background:#fff;"><h2 style="color:#00aa2a;">&#10003; Already confirmed.</h2><p style="color:#999;">' + ev.event_name + '</p></body></html>');
-    }
-    await pool.query(
-      "UPDATE event SET reports_contact_confirmed = TRUE, rc_confirm_token = NULL WHERE id = $1",
-      [ev.id]
-    );
-    res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;background:#fff;"><div style="font-size:48px;">&#10003;</div><h2 style="color:#00aa2a;letter-spacing:2px;">Confirmed!</h2><p style="color:#999;letter-spacing:1px;">' + ev.event_name + '</p><p style="font-size:11px;color:#bbb;margin-top:20px;">You can close this page.</p></body></html>');
-  } catch (err) {
-    console.error('RC confirm error:', err);
-    res.send('<html><body style="font-family:monospace;text-align:center;padding:60px;"><h2 style="color:red;">Server error.</h2></body></html>');
-  }
-});
 
 app.get('/api/events', requireEventAdminAuth, async (req, res) => {
   try {
@@ -849,7 +818,7 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
   const ip = getClientIP(req);
   try {
     const stickerResult = await pool.query(
-      `SELECT s.*, e.event_name, e.org_name, e.start_at, e.ends_at, e.status as event_status, e.id as eid, e.paid, e.reports_contact_confirmed
+      `SELECT s.*, e.event_name, e.org_name, e.start_at, e.ends_at, e.status as event_status, e.id as eid, e.paid
        FROM sticker s JOIN event e ON s.event_id = e.id
        WHERE s.code = $1
        ORDER BY CASE e.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, e.start_at DESC
@@ -860,7 +829,7 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
     const sticker = stickerResult.rows[0];
     if (sticker.event_status === 'stopped' || sticker.event_status === 'finished') return res.status(403).json({ success: false, error: 'event has ended' });
     if (new Date(sticker.ends_at) < new Date()) return res.status(403).json({ success: false, error: 'event has ended' });
-    if (!sticker.reports_contact_confirmed || !sticker.paid) return res.status(403).json({ success: false, error: 'event not ready yet' });
+    if (!sticker.paid) return res.status(403).json({ success: false, error: 'event not ready yet' });
     if (sticker.status === 'invalidated') return res.status(403).json({ success: false, error: 'sticker invalidated, please get a new one' });
     if (sticker.status === 'blocked') return res.status(403).json({ success: false, error: 'sticker blocked' });
     const existingSession = await pool.query('SELECT * FROM session WHERE sticker_id = $1 AND expires_at > NOW()', [sticker.id]);
@@ -1167,7 +1136,7 @@ app.get('/api/admin/event-admins', requireAdminKey, async (req, res) => {
 });
 
 app.put('/api/admin/event-admin/:id/profile', requireAdminKey, async (req, res) => {
-  const { org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, reports_contact_name, reports_contact_phone } = req.body;
+  const { org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat } = req.body;
   try {
     await pool.query(
       `UPDATE event_admin SET
@@ -1176,13 +1145,11 @@ app.put('/api/admin/event-admin/:id/profile', requireAdminKey, async (req, res) 
         street = COALESCE($5, street), street_number = COALESCE($6, street_number),
         postal_code = COALESCE($7, postal_code), city = COALESCE($8, city),
         vat = COALESCE($9, vat),
-        reports_contact_name = COALESCE($10, reports_contact_name),
-        reports_contact_phone = COALESCE($11, reports_contact_phone)
-       WHERE id = $12`,
+       WHERE id = $10`,
       [org_name || null, contact_name || null, business_type || null, country || null,
        street || null, street_number || null, postal_code || null, city || null,
        vat || null,
-       reports_contact_name || null, reports_contact_phone || null, req.params.id]
+       req.params.id]
     );
     res.json({ success: true });
   } catch (err) {
@@ -1225,14 +1192,7 @@ app.post('/api/admin/event-admin/:id/set-password', requireAdminKey, async (req,
   }
 });
 
-app.post('/api/admin/events/:id/confirm-reports-contact', requireAdminKey, async (req, res) => {
-  try {
-    await pool.query('UPDATE event SET reports_contact_confirmed = TRUE WHERE id = $1', [req.params.id]);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
+
 
 app.post('/api/admin/events/:id/confirm-payment', requireAdminKey, async (req, res) => {
   try {
@@ -1441,7 +1401,7 @@ async function finishEvent(eid, stoppedBy) {
 
 cron.schedule('* * * * *', async () => {
   try {
-    await pool.query(`UPDATE event SET status = 'active', effective_start_at = NOW() WHERE status = 'pending' AND start_at <= NOW() AND reports_contact_confirmed = TRUE AND paid = TRUE`);
+    await pool.query(`UPDATE event SET status = 'active', effective_start_at = NOW() WHERE status = 'pending' AND start_at <= NOW() AND paid = TRUE`);
     const expired = await pool.query(`SELECT id FROM event WHERE status = 'active' AND COALESCE(effective_end_at, ends_at) < NOW()`);
     for (const row of expired.rows) {
       await finishEvent(row.id, 'time_expired');
@@ -1457,7 +1417,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.4.17 running on port ${PORT}`);
+  console.log(`nickradar API v6.4.18 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1516,7 +1476,6 @@ app.listen(PORT, '0.0.0.0', async () => {
         stopped_by VARCHAR(20),
         reports_contact_name VARCHAR(100),
         reports_contact_phone VARCHAR(50),
-        reports_contact_confirmed BOOLEAN DEFAULT FALSE,
         paid BOOLEAN DEFAULT FALSE,
         sticker_count INTEGER DEFAULT 0,
         activated_count INTEGER DEFAULT 0,
@@ -1567,7 +1526,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.17 ready');
+    console.log('DB schema v6.4.18 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
