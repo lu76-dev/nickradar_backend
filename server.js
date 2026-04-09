@@ -353,7 +353,7 @@ app.post('/api/event-admin/login', loginLimiter, async (req, res) => {
 app.get('/api/event-admin/me', requireEventAdminAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, phone,
+      `SELECT id, org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat,
               reports_contact_name, reports_contact_phone, email, status, created_at
        FROM event_admin WHERE id = $1`,
       [req.adminId]
@@ -366,20 +366,19 @@ app.get('/api/event-admin/me', requireEventAdminAuth, async (req, res) => {
 });
 
 app.put('/api/event-admin/profile', requireEventAdminAuth, async (req, res) => {
-  const { street, street_number, postal_code, city, vat, phone } = req.body;
+  const { street, street_number, postal_code, city, vat } = req.body;
   try {
-    const current = await pool.query('SELECT street, street_number, postal_code, city, vat, phone FROM event_admin WHERE id = $1', [req.adminId]);
+    const current = await pool.query('SELECT street, street_number, postal_code, city, vat FROM event_admin WHERE id = $1', [req.adminId]);
     if (current.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
     const c = current.rows[0];
     await pool.query(
-      'UPDATE event_admin SET street=$1, street_number=$2, postal_code=$3, city=$4, vat=$5, phone=$6 WHERE id=$7',
+      'UPDATE event_admin SET street=$1, street_number=$2, postal_code=$3, city=$4, vat=$5 WHERE id=$6',
       [
         c.street || street || null,
         c.street_number || street_number || null,
         c.postal_code || postal_code || null,
         c.city || city || null,
         c.vat || vat || null,
-        c.phone || phone || null,
         req.adminId
       ]
     );
@@ -1120,7 +1119,7 @@ app.post('/api/reports', requireParticipantSession, async (req, res) => {
 app.get('/api/admin/event-admins', requireAdminKey, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, phone,
+      `SELECT id, org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat,
               reports_contact_name, reports_contact_phone, email, status, email_verified, created_at, last_login_at
        FROM event_admin ORDER BY created_at DESC`
     );
@@ -1131,7 +1130,7 @@ app.get('/api/admin/event-admins', requireAdminKey, async (req, res) => {
 });
 
 app.put('/api/admin/event-admin/:id/profile', requireAdminKey, async (req, res) => {
-  const { org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, phone, reports_contact_name, reports_contact_phone } = req.body;
+  const { org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat, reports_contact_name, reports_contact_phone } = req.body;
   try {
     await pool.query(
       `UPDATE event_admin SET
@@ -1139,13 +1138,13 @@ app.put('/api/admin/event-admin/:id/profile', requireAdminKey, async (req, res) 
         business_type = COALESCE($3, business_type), country = COALESCE($4, country),
         street = COALESCE($5, street), street_number = COALESCE($6, street_number),
         postal_code = COALESCE($7, postal_code), city = COALESCE($8, city),
-        vat = COALESCE($9, vat), phone = COALESCE($10, phone),
-        reports_contact_name = COALESCE($11, reports_contact_name),
-        reports_contact_phone = COALESCE($12, reports_contact_phone)
-       WHERE id = $13`,
+        vat = COALESCE($9, vat),
+        reports_contact_name = COALESCE($10, reports_contact_name),
+        reports_contact_phone = COALESCE($11, reports_contact_phone)
+       WHERE id = $12`,
       [org_name || null, contact_name || null, business_type || null, country || null,
        street || null, street_number || null, postal_code || null, city || null,
-       vat || null, phone || null,
+       vat || null,
        reports_contact_name || null, reports_contact_phone || null, req.params.id]
     );
     res.json({ success: true });
@@ -1380,7 +1379,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.4.13 running on port ${PORT}`);
+  console.log(`nickradar API v6.4.14 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1486,7 +1485,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.13 ready');
+    console.log('DB schema v6.4.14 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
