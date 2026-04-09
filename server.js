@@ -784,7 +784,7 @@ app.get('/api/events/:id/invoice', requireEventAdminAuth, async (req, res) => {
     const tz = e.timezone || 'Europe/Vienna';
     const tzLabel = tzAbbr(tz);
     const effStart = e.effective_start_at || e.start_at;
-    const effEnd = e.effective_end_at || e.stopped_at || e.ends_at;
+    const effEnd = e.effective_end_at || e.ends_at;
     const startDateStr = new Date(effStart).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
     const startTime = new Date(effStart).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     const endDateStr = new Date(effEnd).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
@@ -1301,7 +1301,7 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
     const tz = e.timezone || 'Europe/Vienna';
     const tzLabel = tzAbbr(tz);
     const effStart = e.effective_start_at || e.start_at;
-    const effEnd = e.effective_end_at || e.stopped_at || e.ends_at;
+    const effEnd = e.effective_end_at || e.ends_at;
     const startDateStr = new Date(effStart).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
     const startTime = new Date(effStart).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     const endDateStr = new Date(effEnd).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
@@ -1370,7 +1370,7 @@ app.get('/', (req, res) => {
 // ============================================================
 
 async function finishEvent(eid, stoppedBy) {
-  await pool.query("UPDATE event SET status = 'finished', stopped_at = NOW(), stopped_by = $1, effective_end_at = COALESCE(effective_end_at, NOW()) WHERE id = $2", [stoppedBy, eid]);
+  await pool.query("UPDATE event SET status = 'finished', stopped_at = NOW(), stopped_by = $1, effective_start_at = COALESCE(effective_start_at, start_at), effective_end_at = COALESCE(effective_end_at, NOW()) WHERE id = $2", [stoppedBy, eid]);
   await pool.query("UPDATE session SET expires_at = NOW() WHERE event_id = $1", [eid]);
   await pool.query("UPDATE chat SET status = 'finished' WHERE event_id = $1 AND status = 'active'", [eid]);
   await pool.query("DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE event_id = $1)", [eid]);
@@ -1398,7 +1398,7 @@ async function finishEvent(eid, stoppedBy) {
 cron.schedule('* * * * *', async () => {
   try {
     await pool.query(`UPDATE event SET status = 'active', effective_start_at = NOW() WHERE status = 'pending' AND start_at <= NOW() AND reports_contact_confirmed = TRUE AND paid = TRUE`);
-    const expired = await pool.query(`SELECT id FROM event WHERE status = 'active' AND ends_at < NOW()`);
+    const expired = await pool.query(`SELECT id FROM event WHERE status = 'active' AND COALESCE(effective_end_at, ends_at) < NOW()`);
     for (const row of expired.rows) {
       await finishEvent(row.id, 'time_expired');
       console.log(`[CRON] Event ${row.id} finished by time_expired`);
@@ -1413,7 +1413,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.4.15 running on port ${PORT}`);
+  console.log(`nickradar API v6.4.16 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1521,7 +1521,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.15 ready');
+    console.log('DB schema v6.4.16 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
