@@ -171,11 +171,21 @@ function generateCode() {
 }
 
 function localToUTC(localDateStr, timezone) {
-  const tempDate = new Date(localDateStr);
-  const utcStr = tempDate.toLocaleString('en-US', { timeZone: 'UTC' });
-  const tzStr = tempDate.toLocaleString('en-US', { timeZone: timezone });
-  const offset = new Date(tzStr) - new Date(utcStr);
-  return new Date(tempDate.getTime() - offset);
+  const [datePart, timePart] = localDateStr.split('T');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute] = (timePart || '00:00').split(':').map(Number);
+  let utc = Date.UTC(year, month - 1, day, hour, minute);
+  for (let i = 0; i < 2; i++) {
+    const local = new Date(utc).toLocaleString('en-US', {
+      timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    });
+    const p = local.match(/(\d+)\/(\d+)\/(\d+),\s+(\d+):(\d+)/);
+    const localUTC = Date.UTC(+p[3], +p[1] - 1, +p[2], +p[4] % 24, +p[5]);
+    utc += Date.UTC(year, month - 1, day, hour, minute) - localUTC;
+  }
+  return new Date(utc);
 }
 
 const TZ_ABBR = {
