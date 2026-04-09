@@ -1138,7 +1138,7 @@ app.put('/api/admin/event-admin/:id/profile', requireAdminKey, async (req, res) 
         business_type = COALESCE($3, business_type), country = COALESCE($4, country),
         street = COALESCE($5, street), street_number = COALESCE($6, street_number),
         postal_code = COALESCE($7, postal_code), city = COALESCE($8, city),
-        vat = COALESCE($9, vat),
+        vat = COALESCE($9, vat)
        WHERE id = $10`,
       [org_name || null, contact_name || null, business_type || null, country || null,
        street || null, street_number || null, postal_code || null, city || null,
