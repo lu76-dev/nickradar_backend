@@ -783,19 +783,21 @@ app.get('/api/events/:id/invoice', requireEventAdminAuth, async (req, res) => {
     const packages = packagesResult.rows;
     const tz = e.timezone || 'Europe/Vienna';
     const tzLabel = tzAbbr(tz);
-    const startDateStr = new Date(e.start_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
-    const startTime = new Date(e.start_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
-    const endDateStr = new Date(e.ends_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
-    const endTime = new Date(e.ends_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const effStart = e.effective_start_at || e.start_at;
+    const effEnd = e.effective_end_at || e.stopped_at || e.ends_at;
+    const startDateStr = new Date(effStart).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const startTime = new Date(effStart).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const endDateStr = new Date(effEnd).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const endTime = new Date(effEnd).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     const invoiceDate = new Date(inv.created_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const durationMs = e.stopped_at ? new Date(e.stopped_at) - new Date(e.start_at) : new Date(e.ends_at) - new Date(e.start_at);
+    const durationMs = new Date(effEnd) - new Date(effStart);
     const durationH = Math.floor(durationMs / 3600000);
     const durationM = Math.floor((durationMs % 3600000) / 60000);
     const durationS = Math.floor((durationMs % 60000) / 1000);
     const durationStr = String(durationH).padStart(2, '0') + ':' + String(durationM).padStart(2, '0') + ':' + String(durationS).padStart(2, '0');
     const stoppedByMap = { time_expired: 'Time expired', event_admin: 'Event Admin', nickradar_admin: 'nickradar Admin' };
-    const stoppedAtStr = e.stopped_at ? new Date(e.stopped_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' + new Date(e.stopped_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz }) : '';
-    const stoppedByStr = (stoppedByMap[e.stopped_by] || '—') + (stoppedAtStr ? ' &nbsp;·&nbsp; ' + stoppedAtStr : '');
+    const stoppedAtStr = '';
+    const stoppedByStr = stoppedByMap[e.stopped_by] || '—';
     const paymentStatus = inv.paid_at ? `<span style="color:green;font-weight:bold;">✓ Bezahlt / Paid &nbsp;·&nbsp; Stripe &nbsp;·&nbsp; Kreditkarte${inv.payment_id ? ' ···· ' + inv.payment_id.slice(-4) : ''} &nbsp;·&nbsp; ${new Date(inv.paid_at).toLocaleDateString('de-AT')}</span>` : `<span style="color:#cc6600;font-weight:bold;">⏳ Ausstehend / Pending &nbsp;·&nbsp; Stripe-Integration in Bearbeitung</span>`;
     let grandTotal = 0;
     let posRows = '';
@@ -1243,6 +1245,26 @@ app.post('/api/admin/events/:id/stop', requireAdminKey, async (req, res) => {
   }
 });
 
+app.put('/api/admin/events/:id/effective-times', requireAdminKey, async (req, res) => {
+  const { effective_start_at, effective_end_at } = req.body;
+  if (!effective_start_at && !effective_end_at) {
+    return res.status(400).json({ success: false, error: 'at least one field required' });
+  }
+  try {
+    const fields = [];
+    const vals = [];
+    let idx = 1;
+    if (effective_start_at) { fields.push(`effective_start_at = $${idx++}`); vals.push(new Date(effective_start_at)); }
+    if (effective_end_at) { fields.push(`effective_end_at = $${idx++}`); vals.push(new Date(effective_end_at)); }
+    vals.push(req.params.id);
+    await pool.query(`UPDATE event SET ${fields.join(', ')} WHERE id = $${idx}`, vals);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Effective times update error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.put('/api/admin/events/:id/duration', requireAdminKey, async (req, res) => {
   const { ends_at } = req.body;
   if (!ends_at) return res.status(400).json({ success: false, error: 'ends_at required' });
@@ -1278,19 +1300,21 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
     const packages = packagesResult.rows;
     const tz = e.timezone || 'Europe/Vienna';
     const tzLabel = tzAbbr(tz);
-    const startDateStr = new Date(e.start_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
-    const startTime = new Date(e.start_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
-    const endDateStr = new Date(e.ends_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
-    const endTime = new Date(e.ends_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const effStart = e.effective_start_at || e.start_at;
+    const effEnd = e.effective_end_at || e.stopped_at || e.ends_at;
+    const startDateStr = new Date(effStart).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const startTime = new Date(effStart).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    const endDateStr = new Date(effEnd).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const endTime = new Date(effEnd).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     const invoiceDate = new Date(inv.created_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const durationMs = e.stopped_at ? new Date(e.stopped_at) - new Date(e.start_at) : new Date(e.ends_at) - new Date(e.start_at);
+    const durationMs = new Date(effEnd) - new Date(effStart);
     const durationH = Math.floor(durationMs / 3600000);
     const durationM = Math.floor((durationMs % 3600000) / 60000);
     const durationS = Math.floor((durationMs % 60000) / 1000);
     const durationStr = String(durationH).padStart(2, '0') + ':' + String(durationM).padStart(2, '0') + ':' + String(durationS).padStart(2, '0');
     const stoppedByMap = { time_expired: 'Time expired', event_admin: 'Event Admin', nickradar_admin: 'nickradar Admin' };
-    const stoppedAtStr = e.stopped_at ? new Date(e.stopped_at).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' + new Date(e.stopped_at).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: tz }) : '';
-    const stoppedByStr = (stoppedByMap[e.stopped_by] || '—') + (stoppedAtStr ? ' &nbsp;·&nbsp; ' + stoppedAtStr : '');
+    const stoppedAtStr = '';
+    const stoppedByStr = stoppedByMap[e.stopped_by] || '—';
     const paymentStatus = inv.paid_at ? `<span style="color:green;font-weight:bold;">✓ Paid &nbsp;·&nbsp; ${inv.payment_provider || '—'}${inv.payment_id ? ' ···· ' + inv.payment_id.slice(-4) : ''} &nbsp;·&nbsp; ${new Date(inv.paid_at).toLocaleDateString('de-AT')}</span>` : `<span style="color:#cc6600;font-weight:bold;">⏳ Pending</span>`;
     let grandTotal = 0;
     let posRows = '';
@@ -1346,7 +1370,7 @@ app.get('/', (req, res) => {
 // ============================================================
 
 async function finishEvent(eid, stoppedBy) {
-  await pool.query("UPDATE event SET status = 'finished', stopped_at = NOW(), stopped_by = $1 WHERE id = $2", [stoppedBy, eid]);
+  await pool.query("UPDATE event SET status = 'finished', stopped_at = NOW(), stopped_by = $1, effective_end_at = COALESCE(effective_end_at, NOW()) WHERE id = $2", [stoppedBy, eid]);
   await pool.query("UPDATE session SET expires_at = NOW() WHERE event_id = $1", [eid]);
   await pool.query("UPDATE chat SET status = 'finished' WHERE event_id = $1 AND status = 'active'", [eid]);
   await pool.query("DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE event_id = $1)", [eid]);
@@ -1373,7 +1397,7 @@ async function finishEvent(eid, stoppedBy) {
 
 cron.schedule('* * * * *', async () => {
   try {
-    await pool.query(`UPDATE event SET status = 'active' WHERE status = 'pending' AND start_at <= NOW() AND reports_contact_confirmed = TRUE AND paid = TRUE`);
+    await pool.query(`UPDATE event SET status = 'active', effective_start_at = NOW() WHERE status = 'pending' AND start_at <= NOW() AND reports_contact_confirmed = TRUE AND paid = TRUE`);
     const expired = await pool.query(`SELECT id FROM event WHERE status = 'active' AND ends_at < NOW()`);
     for (const row of expired.rows) {
       await finishEvent(row.id, 'time_expired');
@@ -1389,7 +1413,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.4.14 running on port ${PORT}`);
+  console.log(`nickradar API v6.4.15 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1491,11 +1515,13 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
 
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS rc_confirm_token VARCHAR(64)`);
+    await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_start_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_end_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.14 ready');
+    console.log('DB schema v6.4.15 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
