@@ -589,7 +589,7 @@ app.get('/api/events/:id/reports', requireEventAdminAuth, async (req, res) => {
     if (check.rows.length === 0) return res.status(403).json({ success: false, error: 'forbidden' });
     const result = await pool.query(
       `SELECT r.id, s1.nickname as reporter_nickname, s2.nickname as reported_nickname,
-              r.reason, r.details, r.created_at, r.resolved, r.resolved_at
+              r.reason, r.details, r.created_at, r.resolved, r.resolved_at, r.resolved_by, r.resolved_by_ip
        FROM report r
        JOIN sticker s1 ON r.reporter_id = s1.id
        JOIN sticker s2 ON r.reported_id = s2.id
@@ -1319,9 +1319,17 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
 
 app.put('/api/reports/:id/resolve', requireEventAdminAuth, async (req, res) => {
   try {
-    await pool.query('UPDATE report SET resolved = TRUE, resolved_at = NOW() WHERE id = $1', [req.params.id]);
+    const adminResult = await pool.query('SELECT org_name FROM event_admin WHERE id = $1', [req.adminId]);
+    const resolvedBy = adminResult.rows.length > 0 ? adminResult.rows[0].org_name : 'Event Admin';
+    const resolvedByIp = getClientIP(req);
+    await pool.query(
+      'UPDATE report SET resolved = TRUE, resolved_at = NOW(), resolved_by = $1, resolved_by_ip = $2 WHERE id = $3',
+      [resolvedBy, resolvedByIp, req.params.id]
+    );
+    console.log(`[REPORT RESOLVED] Report #${req.params.id} by "${resolvedBy}" (IP: ${resolvedByIp}) at ${new Date().toISOString()}`);
     res.json({ success: true });
   } catch (err) {
+    console.error('Resolve report error:', err);
     res.status(500).json({ success: false, error: 'server error' });
   }
 });
@@ -1337,9 +1345,15 @@ app.get('/api/admin/reports', requireAdminKey, async (req, res) => {
 
 app.put('/api/admin/reports/:id/resolve', requireAdminKey, async (req, res) => {
   try {
-    await pool.query('UPDATE report SET resolved = TRUE, resolved_at = NOW() WHERE id = $1', [req.params.id]);
+    const resolvedByIp = getClientIP(req);
+    await pool.query(
+      'UPDATE report SET resolved = TRUE, resolved_at = NOW(), resolved_by = $1, resolved_by_ip = $2 WHERE id = $3',
+      ['nickradar', resolvedByIp, req.params.id]
+    );
+    console.log(`[REPORT RESOLVED] Report #${req.params.id} by "nickradar" (IP: ${resolvedByIp}) at ${new Date().toISOString()}`);
     res.json({ success: true });
   } catch (err) {
+    console.error('Resolve report error:', err);
     res.status(500).json({ success: false, error: 'server error' });
   }
 });
@@ -1411,7 +1425,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.4.18 running on port ${PORT}`);
+  console.log(`nickradar API v6.4.19 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1514,13 +1528,15 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS rc_confirm_token VARCHAR(64)`);
     await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved BOOLEAN DEFAULT FALSE`);
     await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_by VARCHAR(100)`);
+    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_by_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_start_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_end_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.18 ready');
+    console.log('DB schema v6.4.19 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
