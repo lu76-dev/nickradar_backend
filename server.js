@@ -593,6 +593,7 @@ app.get('/api/events/:id/reports', requireEventAdminAuth, async (req, res) => {
        FROM report r
        JOIN sticker s1 ON r.reporter_id = s1.id
        JOIN sticker s2 ON r.reported_id = s2.id
+       JOIN event e ON r.event_id = e.id
        WHERE r.event_id = $1 ORDER BY r.created_at DESC`,
       [req.params.id]
     );
