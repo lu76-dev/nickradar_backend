@@ -589,7 +589,7 @@ app.get('/api/events/:id/reports', requireEventAdminAuth, async (req, res) => {
     if (check.rows.length === 0) return res.status(403).json({ success: false, error: 'forbidden' });
     const result = await pool.query(
       `SELECT r.id, s1.nickname as reporter_nickname, s2.nickname as reported_nickname,
-              r.reason, r.details, r.created_at, r.resolved, r.resolved_at, r.resolved_by, r.resolved_by_ip
+              r.reason, r.details, r.created_at, r.resolved, r.resolved_at, r.resolved_by, r.resolved_by_ip, e.timezone as event_timezone
        FROM report r
        JOIN sticker s1 ON r.reporter_id = s1.id
        JOIN sticker s2 ON r.reported_id = s2.id
@@ -1336,7 +1336,7 @@ app.put('/api/reports/:id/resolve', requireEventAdminAuth, async (req, res) => {
 
 app.get('/api/admin/reports', requireAdminKey, async (req, res) => {
   try {
-    const result = await pool.query(`SELECT r.*, s1.nickname as reporter_nickname, s2.nickname as reported_nickname, e.event_name, ea.org_name as admin_org FROM report r JOIN sticker s1 ON r.reporter_id = s1.id JOIN sticker s2 ON r.reported_id = s2.id JOIN event e ON r.event_id = e.id JOIN event_admin ea ON e.admin_id = ea.id ORDER BY r.resolved ASC, r.created_at DESC`);
+    const result = await pool.query(`SELECT r.*, s1.nickname as reporter_nickname, s2.nickname as reported_nickname, e.event_name, e.timezone as event_timezone, ea.org_name as admin_org FROM report r JOIN sticker s1 ON r.reporter_id = s1.id JOIN sticker s2 ON r.reported_id = s2.id JOIN event e ON r.event_id = e.id JOIN event_admin ea ON e.admin_id = ea.id ORDER BY r.resolved ASC, r.created_at DESC`);
     res.json({ success: true, reports: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
