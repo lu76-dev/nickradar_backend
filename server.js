@@ -511,7 +511,6 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
       'TERMS ACCEPTANCE',
       'You confirmed the following at ' + new Date(terms_accepted_at).toISOString() + ' (IP: ' + termsIp + '):',
       '- Terms & Conditions and Privacy Policy accepted',
-      '- Non-refundable payment policy acknowledged',
       'Terms version: ' + termsVer,
       '',
       'This email serves as your order confirmation. Please keep it for your records.',
