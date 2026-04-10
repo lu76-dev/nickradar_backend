@@ -1078,6 +1078,8 @@ app.post('/api/reports', requireParticipantSession, async (req, res) => {
   try {
     const reported = await pool.query('SELECT s.id, s.nickname, e.admin_id FROM sticker s JOIN event e ON s.event_id = e.id WHERE UPPER(s.nickname) = UPPER($1) AND s.event_id = $2', [reported_nickname, req.session.event_id]);
     if (reported.rows.length === 0) return res.status(404).json({ success: false, error: 'participant not found' });
+    const existing = await pool.query('SELECT id FROM report WHERE reporter_id = $1 AND reported_id = $2 AND event_id = $3', [req.session.sticker_id, reported.rows[0].id, req.session.event_id]);
+    if (existing.rows.length > 0) return res.status(409).json({ success: false, error: 'already reported' });
     await pool.query('INSERT INTO report (reporter_id, reported_id, event_id, reason, details, created_at) VALUES ($1, $2, $3, $4, $5, NOW())', [req.session.sticker_id, reported.rows[0].id, req.session.event_id, reason, details || null]);
     const adminResult = await pool.query('SELECT email, org_name FROM event_admin WHERE id = $1', [reported.rows[0].admin_id]);
     const eventResult2 = await pool.query('SELECT event_name FROM event WHERE id = $1', [req.session.event_id]);
