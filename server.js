@@ -399,22 +399,6 @@ app.put('/api/event-admin/profile', requireEventAdminAuth, async (req, res) => {
   }
 });
 
-app.put('/api/event-admin/reports-contact', requireEventAdminAuth, async (req, res) => {
-  const { reports_contact_name, reports_contact_phone } = req.body;
-  if (!reports_contact_name || !reports_contact_phone) {
-    return res.status(400).json({ success: false, error: 'reports_contact_name and reports_contact_phone required' });
-  }
-  try {
-    await pool.query(
-      'UPDATE event_admin SET reports_contact_name=$1, reports_contact_phone=$2 WHERE id=$3',
-      [reports_contact_name.trim(), reports_contact_phone.trim(), req.adminId]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Reports contact update error:', err);
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
 
 app.put('/api/event-admin/password', requireEventAdminAuth, async (req, res) => {
   const { new_password, confirm_password } = req.body;
@@ -1244,17 +1228,7 @@ app.put('/api/admin/events/:id/effective-times', requireAdminKey, async (req, re
   }
 });
 
-app.put('/api/admin/events/:id/duration', requireAdminKey, async (req, res) => {
-  const { ends_at } = req.body;
-  if (!ends_at) return res.status(400).json({ success: false, error: 'ends_at required' });
-  try {
-    await pool.query('UPDATE event SET ends_at = $1 WHERE id = $2', [new Date(ends_at), req.params.id]);
-    await pool.query('UPDATE session SET expires_at = $1 WHERE event_id = $2', [new Date(ends_at), req.params.id]);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
+
 
 app.get('/api/admin/invoices', requireAdminKey, async (req, res) => {
   try {
@@ -1373,7 +1347,7 @@ app.post('/api/admin/stickers/:id/invalidate', requireAdminKey, async (req, res)
 // ============================================================
 
 app.get('/', (req, res) => {
-  res.json({ message: 'nickradar API v6.3.8', status: 'running' });
+  res.json({ message: 'nickradar API v7.0.0', status: 'running' });
 });
 
 // ============================================================
@@ -1425,7 +1399,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v6.4.19 running on port ${PORT}`);
+  console.log(`nickradar API v7.0.0 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1440,8 +1414,6 @@ app.listen(PORT, '0.0.0.0', async () => {
         city VARCHAR(100),
         vat VARCHAR(50),
         phone VARCHAR(50),
-        reports_contact_name VARCHAR(100),
-        reports_contact_phone VARCHAR(50),
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         status VARCHAR(20) DEFAULT 'pending',
@@ -1453,8 +1425,6 @@ app.listen(PORT, '0.0.0.0', async () => {
       )
     `);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS business_type VARCHAR(50)`);
-    await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS reports_contact_name VARCHAR(100)`);
-    await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS reports_contact_phone VARCHAR(50)`);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS verification_token VARCHAR(64)`);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMP`);
@@ -1482,8 +1452,6 @@ app.listen(PORT, '0.0.0.0', async () => {
         status VARCHAR(20) DEFAULT 'pending',
         stopped_at TIMESTAMP,
         stopped_by VARCHAR(20),
-        reports_contact_name VARCHAR(100),
-        reports_contact_phone VARCHAR(50),
         paid BOOLEAN DEFAULT FALSE,
         sticker_count INTEGER DEFAULT 0,
         activated_count INTEGER DEFAULT 0,
@@ -1494,23 +1462,11 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`
       DO $$
       BEGIN
-        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='security_name') THEN
-          ALTER TABLE event RENAME COLUMN security_name TO reports_contact_name;
-        END IF;
-        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='security_phone') THEN
-          ALTER TABLE event RENAME COLUMN security_phone TO reports_contact_phone;
-        END IF;
-        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='security_confirmed') THEN
-          ALTER TABLE event RENAME COLUMN security_confirmed TO reports_contact_confirmed;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_name') THEN
-          ALTER TABLE event ADD COLUMN reports_contact_name VARCHAR(100);
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_name') THEN
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_phone') THEN
-          ALTER TABLE event ADD COLUMN reports_contact_phone VARCHAR(50);
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_confirmed') THEN
-          ALTER TABLE event ADD COLUMN reports_contact_confirmed BOOLEAN DEFAULT FALSE;
         END IF;
       END $$;
     `);
@@ -1525,7 +1481,6 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS invoice (id SERIAL PRIMARY KEY, invoice_number VARCHAR(20) UNIQUE, admin_id INTEGER REFERENCES event_admin(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), total NUMERIC(10,2), currency VARCHAR(3) DEFAULT 'EUR', payment_provider VARCHAR(50), payment_id VARCHAR(255), paid_at TIMESTAMP, created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
 
-    await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS rc_confirm_token VARCHAR(64)`);
     await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved BOOLEAN DEFAULT FALSE`);
     await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`);
     await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_by VARCHAR(100)`);
@@ -1536,7 +1491,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
-    console.log('DB schema v6.4.19 ready');
+    console.log('DB schema v7.0.0 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
