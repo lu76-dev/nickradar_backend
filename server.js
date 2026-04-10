@@ -1319,8 +1319,8 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
 
 app.put('/api/reports/:id/resolve', requireEventAdminAuth, async (req, res) => {
   try {
-    const adminResult = await pool.query('SELECT org_name FROM event_admin WHERE id = $1', [req.adminId]);
-    const resolvedBy = adminResult.rows.length > 0 ? adminResult.rows[0].org_name : 'Event Admin';
+    const adminResult = await pool.query('SELECT org_name, contact_name FROM event_admin WHERE id = $1', [req.adminId]);
+    const resolvedBy = adminResult.rows.length > 0 ? adminResult.rows[0].org_name + ' (' + adminResult.rows[0].contact_name + ')' : 'Event Admin';
     const resolvedByIp = getClientIP(req);
     await pool.query(
       'UPDATE report SET resolved = TRUE, resolved_at = NOW(), resolved_by = $1, resolved_by_ip = $2 WHERE id = $3',
