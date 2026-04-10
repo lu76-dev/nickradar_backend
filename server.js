@@ -491,7 +491,7 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
     );
 
     const totalPrice = calcPrice(count).toFixed(2);
-    const startFormatted = startDate.toISOString().replace('T', ' ').slice(0, 16) + ' ' + tzAbbr(tz);
+    const startFormatted = startDate.toLocaleDateString('de-AT',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:tz}) + ' ' + startDate.toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit',timeZone:tz}) + ' ' + tzAbbr(tz);
     const emailLines = [
       'Hello ' + admin.org_name + ',',
       '',
