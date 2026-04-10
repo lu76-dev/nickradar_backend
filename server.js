@@ -1100,7 +1100,7 @@ app.post('/api/reports', requireParticipantSession, async (req, res) => {
     const eventName2 = eventResult2.rows[0]?.event_name || '—';
     const reporterNick = req.session.nickname;
     const reportedNick = reported.rows[0].nickname;
-    const emailBody = `A report was submitted at your event.\n\nEvent: ${eventName2}\nFrom: ${reporterNick}\nAbout: ${reportedNick}\nReason: ${reason}\nDetails: ${details || '-'}\nTime: ${new Date().toISOString()}\n\nPlease contact your Reports Contact on-site.\n\nnickradar`;
+    const emailBody = `A report has been submitted at your event.\n\nEvent: ${eventName2}\nReported by: ${reporterNick}\nReported participant: ${reportedNick}\nReason: ${reason}\nDetails: ${details || '-'}\nTime: ${new Date().toISOString()}\n\nPlease open your Reports panel at events.nickradar.com and respond on-site.\n\nnickradar\nevents.nickradar.com`;
     if (adminResult.rows.length > 0) {
       sendEmail(adminResult.rows[0].email, `⚠ nickradar: Report at ${eventName2}`, emailBody);
     }
