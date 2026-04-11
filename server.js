@@ -1282,6 +1282,10 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
 
 
 app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) => {
+  const reason = (req.query.reason || '').trim();
+  if (!reason) return res.status(400).json({ success: false, error: 'reason required' });
+  const ip = getClientIP(req);
+  const keyHash = require('crypto').createHash('sha256').update(req.headers['x-admin-key'] || '').digest('hex').slice(0, 16);
   try {
     const event = await pool.query('SELECT * FROM event WHERE id = $1', [req.params.id]);
     if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
@@ -1296,6 +1300,12 @@ app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) =
        ORDER BY m.sent_at ASC`,
       [req.params.id]
     );
+    await pool.query(
+      `INSERT INTO admin_access_log (event_id, action, reason, ip_address, admin_key_hash, message_count, created_at)
+       VALUES ($1, 'chat_export', $2, $3, $4, $5, NOW())`,
+      [req.params.id, reason, ip, keyHash, messages.rows.length]
+    );
+    console.log(`[ADMIN ACCESS] chat_export | event=${req.params.id} | messages=${messages.rows.length} | reason="${reason}" | ip=${ip} | key=${keyHash} | ${new Date().toISOString()}`);
     const header = 'sender_nickname,receiver_nickname,message,timestamp\n';
     const rows = messages.rows.map(r => {
       const msg = r.message.replace(/"/g, '""');
@@ -1317,6 +1327,20 @@ app.post('/api/admin/stickers/:id/invalidate', requireAdminKey, async (req, res)
     await pool.query("UPDATE sticker SET status = 'invalidated', invalidated_at = NOW(), invalidated_by = 'nickradar_admin' WHERE id = $1", [req.params.id]);
     await pool.query("UPDATE session SET expires_at = NOW() WHERE sticker_id = $1", [req.params.id]);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+
+app.get('/api/admin/access-log', requireAdminKey, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT al.*, e.event_name FROM admin_access_log al
+       LEFT JOIN event e ON al.event_id = e.id
+       ORDER BY al.created_at DESC LIMIT 500`
+    );
+    res.json({ success: true, logs: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
   }
@@ -1471,6 +1495,16 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_version VARCHAR(20)`);
     await pool.query(`UPDATE invoice SET invoice_number = 'EAR-' || SUBSTRING(invoice_number FROM 4) WHERE invoice_number LIKE 'EA-%' AND invoice_number NOT LIKE 'EAR-%'`).catch(()=>{});
+    await pool.query(`CREATE TABLE IF NOT EXISTS admin_access_log (
+      id SERIAL PRIMARY KEY,
+      event_id INTEGER REFERENCES event(id),
+      action VARCHAR(50) NOT NULL,
+      reason TEXT,
+      ip_address VARCHAR(45),
+      admin_key_hash VARCHAR(16),
+      message_count INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
     console.log('DB schema v8.0.0 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
