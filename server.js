@@ -1284,6 +1284,7 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
 app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) => {
   const reason = (req.query.reason || '').trim();
   const reasonCategory = (req.query.reason_category || '').trim();
+  const referenceId = (req.query.reference_id || '').trim();
   if (!reason) return res.status(400).json({ success: false, error: 'reason required' });
   if (!reasonCategory) return res.status(400).json({ success: false, error: 'reason_category required' });
   const ip = getClientIP(req);
@@ -1314,11 +1315,11 @@ app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) =
     const exportId = 'EX-' + auditTimestamp.slice(0,10).replace(/-/g,'') + '-' + auditTimestamp.slice(11,19).replace(/:/g,'') + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
     const filename = `nickradar_chat_export_EV-${String(req.params.id).padStart(8,'0')}_${exportId}.csv`;
     await pool.query(
-      `INSERT INTO admin_access_log (event_id, action, reason_category, reason, ip_address, admin_key_hash, message_count, export_id, csv_hash, created_at)
-       VALUES ($1, 'chat_export', $2, $3, $4, $5, $6, $7, $8, NOW())`,
-      [req.params.id, reasonCategory, reason, ip, keyHash, messages.rows.length, exportId, csvHash]
+      `INSERT INTO admin_access_log (event_id, action, reason_category, reason, reference_id, ip_address, admin_key_hash, message_count, export_id, csv_hash, created_at)
+       VALUES ($1, 'chat_export', $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+      [req.params.id, reasonCategory, reason, referenceId || null, ip, keyHash, messages.rows.length, exportId, csvHash]
     );
-    console.log(`[ADMIN ACCESS] chat_export | export_id=${exportId} | event=${req.params.id} | messages=${messages.rows.length} | category=${reasonCategory} | reason="${reason}" | ip=${ip} | key=${keyHash} | csv_hash=${csvHash} | ${auditTimestamp}`);
+    console.log(`[ADMIN ACCESS] chat_export | export_id=${exportId} | event=${req.params.id} | messages=${messages.rows.length} | category=${reasonCategory} | reason="${reason}" | ref="${referenceId}" | ip=${ip} | key=${keyHash} | csv_hash=${csvHash} | ${auditTimestamp}`);
     if (process.env.AUDIT_EMAIL) {
       const auditSubject = `[nickradar AUDIT] Chat Export | Event:${req.params.id} | ExportID:${exportId} | Category:${reasonCategory} | Msgs:${messages.rows.length} | UTC:${auditTimestamp}`;
       const auditBody = [
@@ -1332,6 +1333,7 @@ app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) =
         '',
         `Reason Category: ${reasonCategory}`,
         `Reason Details: ${reason}`,
+        `Reference ID: ${referenceId || '—'}`,
         '',
         `Messages Exported: ${messages.rows.length}`,
         `CSV File Name: ${filename}`,
@@ -1522,12 +1524,20 @@ app.listen(PORT, '0.0.0.0', async () => {
       id SERIAL PRIMARY KEY,
       event_id INTEGER REFERENCES event(id),
       action VARCHAR(50) NOT NULL,
+      reason_category VARCHAR(50),
       reason TEXT,
+      reference_id TEXT,
       ip_address VARCHAR(45),
       admin_key_hash VARCHAR(16),
       message_count INTEGER DEFAULT 0,
+      export_id VARCHAR(40),
+      csv_hash VARCHAR(64),
       created_at TIMESTAMP DEFAULT NOW()
     )`);
+    await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS reason_category VARCHAR(50)`);
+    await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS export_id VARCHAR(40)`);
+    await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS csv_hash VARCHAR(64)`);
+    await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS reference_id TEXT`);
     console.log('DB schema v8.0.0 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
