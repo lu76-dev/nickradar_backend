@@ -1072,6 +1072,19 @@ app.put('/api/chats/:id/block', requireParticipantSession, async (req, res) => {
 // REPORTS
 // ============================================================
 
+app.get('/api/reports/check', requireParticipantSession, async (req, res) => {
+  const { nickname } = req.query;
+  if (!nickname) return res.status(400).json({ success: false, error: 'nickname required' });
+  try {
+    const target = await pool.query('SELECT id FROM sticker WHERE UPPER(nickname) = UPPER($1) AND event_id = $2', [nickname, req.session.event_id]);
+    if (target.rows.length === 0) return res.json({ success: true, reported: false });
+    const existing = await pool.query('SELECT id FROM report WHERE reporter_id = $1 AND reported_id = $2 AND event_id = $3', [req.session.sticker_id, target.rows[0].id, req.session.event_id]);
+    res.json({ success: true, reported: existing.rows.length > 0 });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.post('/api/reports', requireParticipantSession, async (req, res) => {
   const { reported_nickname, reason, details } = req.body;
   if (!reported_nickname || !reason) return res.status(400).json({ success: false, error: 'reported_nickname and reason required' });
