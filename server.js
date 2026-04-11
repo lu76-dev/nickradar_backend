@@ -1283,9 +1283,12 @@ app.get('/api/admin/events/:id/invoice', function(req,res,next){if(req.query.key
 
 app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) => {
   const reason = (req.query.reason || '').trim();
+  const reasonCategory = (req.query.reason_category || '').trim();
   if (!reason) return res.status(400).json({ success: false, error: 'reason required' });
+  if (!reasonCategory) return res.status(400).json({ success: false, error: 'reason_category required' });
   const ip = getClientIP(req);
-  const keyHash = require('crypto').createHash('sha256').update(req.headers['x-admin-key'] || '').digest('hex').slice(0, 16);
+  const crypto = require('crypto');
+  const keyHash = crypto.createHash('sha256').update(req.headers['x-admin-key'] || '').digest('hex').slice(0, 16);
   try {
     const event = await pool.query('SELECT * FROM event WHERE id = $1', [req.params.id]);
     if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
@@ -1300,51 +1303,54 @@ app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) =
        ORDER BY m.sent_at ASC`,
       [req.params.id]
     );
-    await pool.query(
-      `INSERT INTO admin_access_log (event_id, action, reason, ip_address, admin_key_hash, message_count, created_at)
-       VALUES ($1, 'chat_export', $2, $3, $4, $5, NOW())`,
-      [req.params.id, reason, ip, keyHash, messages.rows.length]
-    );
-    console.log(`[ADMIN ACCESS] chat_export | event=${req.params.id} | messages=${messages.rows.length} | reason="${reason}" | ip=${ip} | key=${keyHash} | ${new Date().toISOString()}`);
-    if (process.env.AUDIT_EMAIL) {
-      const auditTimestamp = new Date().toISOString();
-      const auditSubject = `[nickradar AUDIT] Chat Export — Event ${req.params.id} — ${auditTimestamp}`;
-      const auditBody = `NICKRADAR AUDIT LOG — CHAT EXPORT
-
-Timestamp (UTC): ${auditTimestamp}
-Event ID: EV-${String(req.params.id).padStart(8,'0')}
-Event Name: ${event.rows[0].event_name}
-Messages exported: ${messages.rows.length}
-Reason: ${reason}
-IP Address: ${ip}
-Admin Key Hash: ${keyHash}
-
-This email was generated automatically by nickradar at the time of the export.
-It serves as an immutable audit record.`;
-      sendEmail(process.env.AUDIT_EMAIL, auditSubject, auditBody);
-    }
     const header = 'sender_nickname,receiver_nickname,message,timestamp\n';
-    const rows = messages.rows.map(r => {
+    const csvRows = messages.rows.map(r => {
       const msg = r.message.replace(/"/g, '""');
       return `"${r.sender_nickname}","${r.receiver_nickname}","${msg}","${new Date(r.timestamp).toISOString()}"`;
     }).join('\n');
-    const csv = header + rows;
-    const filename = `nickradar_chat_export_event_${req.params.id}_${new Date().toISOString().slice(0,10)}.csv`;
+    const csv = header + csvRows;
+    const csvHash = crypto.createHash('sha256').update(csv).digest('hex');
+    const auditTimestamp = new Date().toISOString();
+    const exportId = 'EX-' + auditTimestamp.slice(0,10).replace(/-/g,'') + '-' + auditTimestamp.slice(11,19).replace(/:/g,'') + '-' + crypto.randomBytes(2).toString('hex').toUpperCase();
+    const filename = `nickradar_chat_export_EV-${String(req.params.id).padStart(8,'0')}_${exportId}.csv`;
+    await pool.query(
+      `INSERT INTO admin_access_log (event_id, action, reason_category, reason, ip_address, admin_key_hash, message_count, export_id, csv_hash, created_at)
+       VALUES ($1, 'chat_export', $2, $3, $4, $5, $6, $7, $8, NOW())`,
+      [req.params.id, reasonCategory, reason, ip, keyHash, messages.rows.length, exportId, csvHash]
+    );
+    console.log(`[ADMIN ACCESS] chat_export | export_id=${exportId} | event=${req.params.id} | messages=${messages.rows.length} | category=${reasonCategory} | reason="${reason}" | ip=${ip} | key=${keyHash} | csv_hash=${csvHash} | ${auditTimestamp}`);
+    if (process.env.AUDIT_EMAIL) {
+      const auditSubject = `[nickradar AUDIT] Chat Export | Event:${req.params.id} | ExportID:${exportId} | Category:${reasonCategory} | Msgs:${messages.rows.length} | UTC:${auditTimestamp}`;
+      const auditBody = [
+        'NICKRADAR AUDIT LOG -- CHAT EXPORT',
+        '',
+        `Timestamp (UTC): ${auditTimestamp}`,
+        `Export ID: ${exportId}`,
+        '',
+        `Event ID: EV-${String(req.params.id).padStart(8,'0')}`,
+        `Event Name: ${event.rows[0].event_name}`,
+        '',
+        `Reason Category: ${reasonCategory}`,
+        `Reason Details: ${reason}`,
+        '',
+        `Messages Exported: ${messages.rows.length}`,
+        `CSV File Name: ${filename}`,
+        `CSV SHA-256: ${csvHash}`,
+        '',
+        `IP Address: ${ip}`,
+        `Admin Key Hash: ${keyHash}`,
+        `Access Actor: PRIMARY_OPERATOR`,
+        '',
+        'This email was generated automatically by nickradar at the time of export.',
+        'It serves as an external timestamped audit notification and supplementary evidence of the export event.'
+      ].join('\n');
+      sendEmail(process.env.AUDIT_EMAIL, auditSubject, auditBody);
+    }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);
   } catch (err) {
     console.error('Chat export error:', err);
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
-
-app.post('/api/admin/stickers/:id/invalidate', requireAdminKey, async (req, res) => {
-  try {
-    await pool.query("UPDATE sticker SET status = 'invalidated', invalidated_at = NOW(), invalidated_by = 'nickradar_admin' WHERE id = $1", [req.params.id]);
-    await pool.query("UPDATE session SET expires_at = NOW() WHERE sticker_id = $1", [req.params.id]);
-    res.json({ success: true });
-  } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
   }
 });
