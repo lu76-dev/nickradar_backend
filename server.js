@@ -691,12 +691,15 @@ app.get('/api/events/:id/print', requireEventAdminAuth, async (req, res) => {
       for (const s of pageStickers) {
         if (s) {
           cells += `<div class="sticker">
+              <div class="sticker-top">
+                <div class="code">${s.code}</div>
+                <div class="bottom">${dateTime}</div>
+                <div class="bottom">${e.org_name} · ${e.event_name}</div>
+              </div>
               <div class="nick">${s.nickname}</div>
-              <div class="code">${s.code}</div>
-              <div class="bottom">${dateTime}</div>
-              <div class="bottom">${e.org_name} · ${e.event_name}</div>
-              <div style="text-align:center;margin-top:2px;"><img class="sticker-logo" src="https://app.nickradar.com/nr_logo.png" alt="" /></div>
-              <div class="bottom" style="text-align:center;">nickradar.com</div>
+              <div class="sticker-bottom">
+                <img class="sticker-logo" src="https://app.nickradar.com/nr_logo.png" alt="" /><span class="sticker-brand">nickradar</span>
+              </div>
             </div>`;
         } else {
           cells += `<div class="sticker empty"></div>`;
@@ -705,7 +708,7 @@ app.get('/api/events/:id/print', requireEventAdminAuth, async (req, res) => {
       sheetsHtml += `<div class="page">${cells}</div>`;
     }
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>nickradar stickers — ${e.event_name}</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#e0e0e0;font-family:'Courier New',monospace;}.info{padding:12px 20px;font-size:12px;color:#555;}.page{width:210mm;height:297mm;background:white;margin:20px auto;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(8,1fr);}.sticker{border-right:1px solid #999;border-bottom:1px solid #999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:2mm 3mm;}.sticker:nth-child(3n){border-right:none;}.sticker:nth-child(n+22){border-bottom:none;}.sticker.empty{background:#f9f9f9;}.nick{font-size:58px;font-weight:900;letter-spacing:1px;color:#000;text-align:center;line-height:1;font-family:'Arial Black','Arial Bold',Impact,sans-serif;}.code{font-size:14px;letter-spacing:3px;color:#00aa2a;font-weight:bold;}.bottom{font-size:6px;letter-spacing:1px;color:#bbb;text-align:center;}.sticker-logo{height:10px;width:auto;margin-top:2px;opacity:0.4;}@media print{body{background:white;}.info{display:none;}.page{margin:0;box-shadow:none;}}</style></head><body><div class="info">nickradar · ${e.event_name} · ${total} stickers · ${pages} page(s) · <a href="javascript:window.print()">Print</a></div>${sheetsHtml}</body></html>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>nickradar stickers — ${e.event_name}</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#e0e0e0;font-family:'Courier New',monospace;}.info{padding:12px 20px;font-size:12px;color:#555;}.page{width:210mm;height:297mm;background:white;margin:20px auto;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(8,1fr);}.sticker{border-right:1px solid #999;border-bottom:1px solid #999;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:2mm 3mm;}.sticker:nth-child(3n){border-right:none;}.sticker:nth-child(n+22){border-bottom:none;}.sticker.empty{background:#f9f9f9;}.sticker-top{width:100%;text-align:center;}.sticker-bottom{display:flex;align-items:center;justify-content:center;gap:4px;width:100%;}.nick{font-size:58px;font-weight:900;letter-spacing:1px;color:#000;text-align:center;line-height:1;font-family:'Arial Black','Arial Bold',Impact,sans-serif;flex:1;display:flex;align-items:center;justify-content:center;}.code{font-size:13px;letter-spacing:3px;color:#00aa2a;font-weight:bold;text-align:center;margin-bottom:1px;}.bottom{font-size:6px;letter-spacing:1px;color:#bbb;text-align:center;}.sticker-logo{height:9px;width:auto;opacity:0.5;}.sticker-brand{font-size:8px;font-weight:bold;letter-spacing:2px;color:#bbb;font-family:'Courier New',monospace;}@media print{body{background:white;}.info{display:none;}.page{margin:0;box-shadow:none;}}</style></head><body><div class="info">nickradar · ${e.event_name} · ${total} stickers · ${pages} page(s) · <a href="javascript:window.print()">Print</a></div>${sheetsHtml}</body></html>`;
 
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
