@@ -1032,6 +1032,30 @@ app.get('/api/chats', requireParticipantSession, async (req, res) => {
   }
 });
 
+app.get('/api/chats/blocked', requireParticipantSession, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.*,
+        CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
+        CASE
+          WHEN c.blocked_by = $1 THEN 'blocked by you'
+          WHEN c.blocked_by != $1 AND c.seeker_id = $1 THEN 'blocked by target'
+          WHEN c.blocked_by != $1 AND c.target_id = $1 THEN 'blocked by seeker'
+          ELSE 'blocked'
+        END as blocked_label
+       FROM chat c
+       JOIN sticker s1 ON c.seeker_id = s1.id
+       JOIN sticker s2 ON c.target_id = s2.id
+       WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2 AND c.status = 'blocked'
+       ORDER BY c.blocked_at DESC`,
+      [req.session.sticker_id, req.session.event_id]
+    );
+    res.json({ success: true, chats: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.get('/api/messages/:chatId', requireParticipantSession, async (req, res) => {
   try {
     const chat = await pool.query('SELECT * FROM chat WHERE id = $1 AND (seeker_id = $2 OR target_id = $2)', [req.params.chatId, req.session.sticker_id]);
