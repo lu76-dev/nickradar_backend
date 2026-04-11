@@ -1306,6 +1306,23 @@ app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) =
       [req.params.id, reason, ip, keyHash, messages.rows.length]
     );
     console.log(`[ADMIN ACCESS] chat_export | event=${req.params.id} | messages=${messages.rows.length} | reason="${reason}" | ip=${ip} | key=${keyHash} | ${new Date().toISOString()}`);
+    if (process.env.AUDIT_EMAIL) {
+      const auditTimestamp = new Date().toISOString();
+      const auditSubject = `[nickradar AUDIT] Chat Export — Event ${req.params.id} — ${auditTimestamp}`;
+      const auditBody = `NICKRADAR AUDIT LOG — CHAT EXPORT
+
+Timestamp (UTC): ${auditTimestamp}
+Event ID: EV-${String(req.params.id).padStart(8,'0')}
+Event Name: ${event.rows[0].event_name}
+Messages exported: ${messages.rows.length}
+Reason: ${reason}
+IP Address: ${ip}
+Admin Key Hash: ${keyHash}
+
+This email was generated automatically by nickradar at the time of the export.
+It serves as an immutable audit record.`;
+      sendEmail(process.env.AUDIT_EMAIL, auditSubject, auditBody);
+    }
     const header = 'sender_nickname,receiver_nickname,message,timestamp\n';
     const rows = messages.rows.map(r => {
       const msg = r.message.replace(/"/g, '""');
