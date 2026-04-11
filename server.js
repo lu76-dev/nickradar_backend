@@ -985,6 +985,7 @@ app.put('/api/requests/:id', requireParticipantSession, async (req, res) => {
       const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [r.event_id]);
       const chat = await pool.query(`INSERT INTO chat (request_id, event_id, seeker_id, target_id, started_at, ends_at, status) VALUES ($1, $2, $3, $4, NOW(), $5, 'active') RETURNING *`, [r.id, r.event_id, r.seeker_id, r.target_id, event.rows[0].ends_at]);
       await pool.query('UPDATE event SET connection_count = connection_count + 1 WHERE id = $1', [r.event_id]);
+      await pool.query('INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW())', [chat.rows[0].id, r.seeker_id, r.message]);
       return res.json({ success: true, chat: chat.rows[0] });
     }
     res.json({ success: true });
