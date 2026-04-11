@@ -1041,13 +1041,41 @@ app.get('/api/requests/history', requireParticipantSession, async (req, res) => 
 // CHATS + MESSAGES
 // ============================================================
 
+app.post('/api/chats/start', requireParticipantSession, async (req, res) => {
+  const { target_nickname, message } = req.body;
+  if (!target_nickname || !message) return res.status(400).json({ success: false, error: 'target_nickname and message required' });
+  if (message.length < 2 || message.length > 500) return res.status(400).json({ success: false, error: 'message must be 2-500 chars' });
+  try {
+    const target = await pool.query("SELECT id FROM sticker WHERE UPPER(nickname) = UPPER($1) AND event_id = $2 AND status = 'active'", [target_nickname, req.session.event_id]);
+    if (target.rows.length === 0) return res.status(404).json({ success: false, error: 'participant not found' });
+    const targetId = target.rows[0].id;
+    if (targetId === req.session.sticker_id) return res.status(400).json({ success: false, error: 'cannot chat with yourself' });
+    const blockCheck = await pool.query(`SELECT id FROM chat WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'blocked'`, [req.session.event_id, req.session.sticker_id, targetId]);
+    if (blockCheck.rows.length > 0) return res.status(403).json({ success: false, error: 'blocked' });
+    const existing = await pool.query(`SELECT id FROM chat WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'active'`, [req.session.event_id, req.session.sticker_id, targetId]);
+    if (existing.rows.length > 0) {
+      await pool.query('INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW())', [existing.rows[0].id, req.session.sticker_id, message]);
+      return res.json({ success: true, chat_id: existing.rows[0].id });
+    }
+    const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [req.session.event_id]);
+    const chat = await pool.query(`INSERT INTO chat (event_id, seeker_id, target_id, started_at, ends_at, status) VALUES ($1, $2, $3, NOW(), $4, 'active') RETURNING *`, [req.session.event_id, req.session.sticker_id, targetId, event.rows[0].ends_at]);
+    await pool.query('INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW())', [chat.rows[0].id, req.session.sticker_id, message]);
+    await pool.query('UPDATE event SET connection_count = connection_count + 1 WHERE id = $1', [req.session.event_id]);
+    res.status(201).json({ success: true, chat_id: chat.rows[0].id });
+  } catch (err) {
+    console.error('Start chat error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.get('/api/chats', requireParticipantSession, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT c.*,
         CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
         CASE WHEN c.seeker_id = $1 THEN p2.photo_url ELSE p1.photo_url END as other_photo,
-        (SELECT m.sender_id FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_sender_id
+        (SELECT m.sender_id FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_sender_id,
+        (SELECT m.text FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_message
        FROM chat c JOIN sticker s1 ON c.seeker_id = s1.id JOIN sticker s2 ON c.target_id = s2.id
        LEFT JOIN profile p1 ON p1.sticker_id = s1.id LEFT JOIN profile p2 ON p2.sticker_id = s2.id
        WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2 AND c.status = 'active'
