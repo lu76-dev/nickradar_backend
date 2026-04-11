@@ -898,7 +898,18 @@ app.get('/api/search', requireParticipantSession, async (req, res) => {
        ORDER BY s.nickname ASC LIMIT 10`,
       [req.session.event_id, req.session.sticker_id, q + '%']
     );
-    res.json({ success: true, participants: result.rows });
+    // Filter out participants with whom there is a block (NO response or blocked chat)
+    const blockedIds = await pool.query(
+      `SELECT target_id as id FROM request WHERE event_id = $1 AND seeker_id = $2 AND status = 'no'
+       UNION
+       SELECT seeker_id as id FROM request WHERE event_id = $1 AND target_id = $2 AND status = 'no'
+       UNION
+       SELECT CASE WHEN seeker_id = $2 THEN target_id ELSE seeker_id END as id FROM chat WHERE event_id = $1 AND (seeker_id = $2 OR target_id = $2) AND status = 'blocked'`,
+      [req.session.event_id, req.session.sticker_id]
+    );
+    const blockedSet = new Set(blockedIds.rows.map(r => r.id));
+    const filtered = result.rows.filter(p => !blockedSet.has(p.id));
+    res.json({ success: true, participants: filtered });
   } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
   }
@@ -934,6 +945,8 @@ app.post('/api/requests', requireParticipantSession, async (req, res) => {
     if (targetId === req.session.sticker_id) return res.status(400).json({ success: false, error: 'cannot send request to yourself' });
     const blockCheck = await pool.query(`SELECT id FROM request WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'no'`, [req.session.event_id, req.session.sticker_id, targetId]);
     if (blockCheck.rows.length > 0) return res.status(403).json({ success: false, error: 'blocked' });
+    const chatBlockCheck = await pool.query(`SELECT id FROM chat WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'blocked'`, [req.session.event_id, req.session.sticker_id, targetId]);
+    if (chatBlockCheck.rows.length > 0) return res.status(403).json({ success: false, error: 'blocked' });
     const existing = await pool.query("SELECT id FROM request WHERE seeker_id = $1 AND target_id = $2 AND event_id = $3 AND status = 'pending'", [req.session.sticker_id, targetId, req.session.event_id]);
     if (existing.rows.length > 0) return res.status(409).json({ success: false, error: 'request already pending' });
     const chatCheck = await pool.query(`SELECT id FROM chat WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'active'`, [req.session.event_id, req.session.sticker_id, targetId]);
