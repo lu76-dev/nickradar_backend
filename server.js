@@ -715,6 +715,44 @@ app.get('/api/events/:id/print', requireEventAdminAuth, async (req, res) => {
   }
 });
 
+app.get('/api/events/:id/print-back', requireEventAdminAuth, async (req, res) => {
+  try {
+    const event = await pool.query('SELECT * FROM event WHERE id = $1 AND admin_id = $2', [req.params.id, req.adminId]);
+    if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    const e = event.rows[0];
+    const stickers = await pool.query('SELECT * FROM sticker WHERE event_id = $1 ORDER BY id ASC', [req.params.id]);
+    const total = stickers.rows.length;
+    const perPage = 24;
+    const pages = Math.ceil(total / perPage);
+    const QR_URL = 'https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=https%3A%2F%2Fapp.nickradar.com&bgcolor=ffffff&color=000000&margin=2';
+    const instrCell = `<div class="instr"><img class="instr-logo" src="https://app.nickradar.com/nr_logo.png" alt="" /><div class="instr-brand">nickradar</div><img class="instr-qr" src="${QR_URL}" alt="QR" /><div class="instr-url">app.nickradar.com</div><div class="instr-steps"><div class="step"><span class="sn">1</span>open app.nickradar.com</div><div class="step"><span class="sn">2</span>enter your 4-digit code</div><div class="step"><span class="sn">3</span>stick it &mdash; stay visible</div><div class="step"><span class="sn">4</span>search nicknames &middot; connect</div></div></div>`;
+    let sheetsHtml = '';
+    for (let p = 0; p < pages; p++) {
+      const pageStickers = stickers.rows.slice(p * perPage, (p + 1) * perPage);
+      while (pageStickers.length < perPage) pageStickers.push(null);
+      // Mirror each row of 3 horizontally so back aligns with front when page is flipped
+      const mirrored = [];
+      for (let row = 0; row < 8; row++) {
+        mirrored.push(pageStickers[row * 3 + 2], pageStickers[row * 3 + 1], pageStickers[row * 3 + 0]);
+      }
+      let cells = '';
+      for (const s of mirrored) {
+        cells += s !== null
+          ? `<div class="cell">${instrCell}</div>`
+          : `<div class="cell empty"></div>`;
+      }
+      sheetsHtml += `<div class="page">${cells}</div>`;
+    }
+    const css = `*{margin:0;padding:0;box-sizing:border-box;}body{background:#e0e0e0;font-family:'Courier New',monospace;}.info{padding:12px 20px;font-size:12px;color:#555;}.page{width:210mm;height:297mm;background:white;margin:20px auto;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(8,1fr);}.cell{border-right:1px solid #999;border-bottom:1px solid #999;display:flex;align-items:center;justify-content:center;padding:2mm;}.cell:nth-child(3n){border-right:none;}.cell:nth-child(n+22){border-bottom:none;}.cell.empty{background:#f9f9f9;}.instr{display:flex;flex-direction:column;align-items:center;gap:2px;width:100%;}.instr-logo{height:10px;width:auto;opacity:0.6;}.instr-brand{font-size:9px;font-weight:900;letter-spacing:3px;color:#000;}.instr-qr{width:46px;height:46px;margin:2px 0;}.instr-url{font-size:6.5px;letter-spacing:1px;color:#00aa2a;font-weight:bold;}.instr-steps{display:flex;flex-direction:column;gap:1.5px;width:100%;margin-top:2px;}.step{font-size:5.8px;letter-spacing:0.3px;color:#333;display:flex;align-items:center;gap:3px;}.sn{background:#000;color:#00ff41;font-size:5px;font-weight:bold;width:8px;height:8px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}@media print{body{background:white;}.info{display:none;}.page{margin:0;box-shadow:none;}}`;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>nickradar back — ${e.event_name}</title><style>${css}</style></head><body><div class="info">nickradar · ${e.event_name} · BACK SIDE · ${total} stickers · ${pages} page(s) · <a href="javascript:window.print()">Print</a></div>${sheetsHtml}</body></html>`;
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('Print back error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.get('/api/events/:id/invoice', requireEventAdminAuth, async (req, res) => {
   try {
     const eventResult = await pool.query('SELECT * FROM event WHERE id = $1 AND admin_id = $2', [req.params.id, req.adminId]);
