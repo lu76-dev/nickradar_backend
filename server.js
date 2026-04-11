@@ -75,7 +75,7 @@ async function requireParticipantSession(req, res, next) {
   if (!token) return res.status(401).json({ success: false, error: 'no session' });
   try {
     const result = await pool.query(
-      `SELECT s.*, st.nickname, st.event_id, st.id as sticker_id, e.ends_at, e.status as event_status
+      `SELECT s.*, st.nickname, st.event_id, st.id as sticker_id, e.ends_at, e.status as event_status, e.event_name, e.timezone
        FROM session s
        JOIN sticker st ON s.sticker_id = st.id
        JOIN event e ON s.event_id = e.id
@@ -852,7 +852,7 @@ app.get('/api/participant/me', requireParticipantSession, async (req, res) => {
       participant: {
         nickname: req.session.nickname, sticker_id: req.session.sticker_id,
         event_id: req.session.event_id, event_name: req.session.event_name,
-        ends_at: req.session.ends_at,
+        ends_at: req.session.ends_at, timezone: req.session.timezone,
         photo_url: profile.rows[0]?.photo_url || null, slogan: profile.rows[0]?.slogan || null,
       }
     });
