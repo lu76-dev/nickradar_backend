@@ -999,7 +999,7 @@ app.get('/api/requests/outgoing', requireParticipantSession, async (req, res) =>
   try {
     const result = await pool.query(
       `SELECT r.*, s.nickname as target_nickname FROM request r JOIN sticker s ON r.target_id = s.id
-       WHERE r.seeker_id = $1 AND r.event_id = $2 ORDER BY r.sent_at DESC`,
+       WHERE r.seeker_id = $1 AND r.event_id = $2 AND r.status = 'pending' ORDER BY r.sent_at DESC`,
       [req.session.sticker_id, req.session.event_id]
     );
     res.json({ success: true, requests: result.rows });
