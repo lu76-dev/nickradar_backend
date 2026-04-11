@@ -1032,7 +1032,8 @@ app.get('/api/chats', requireParticipantSession, async (req, res) => {
     const result = await pool.query(
       `SELECT c.*,
         CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
-        CASE WHEN c.seeker_id = $1 THEN p2.photo_url ELSE p1.photo_url END as other_photo
+        CASE WHEN c.seeker_id = $1 THEN p2.photo_url ELSE p1.photo_url END as other_photo,
+        (SELECT m.sender_id FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_sender_id
        FROM chat c JOIN sticker s1 ON c.seeker_id = s1.id JOIN sticker s2 ON c.target_id = s2.id
        LEFT JOIN profile p1 ON p1.sticker_id = s1.id LEFT JOIN profile p2 ON p2.sticker_id = s2.id
        WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2 AND c.status = 'active'
