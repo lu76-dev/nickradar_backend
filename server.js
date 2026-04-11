@@ -730,13 +730,8 @@ app.get('/api/events/:id/print-back', requireEventAdminAuth, async (req, res) =>
     for (let p = 0; p < pages; p++) {
       const pageStickers = stickers.rows.slice(p * perPage, (p + 1) * perPage);
       while (pageStickers.length < perPage) pageStickers.push(null);
-      // Mirror each row of 3 horizontally so back aligns with front when page is flipped
-      const mirrored = [];
-      for (let row = 0; row < 8; row++) {
-        mirrored.push(pageStickers[row * 3 + 2], pageStickers[row * 3 + 1], pageStickers[row * 3 + 0]);
-      }
       let cells = '';
-      for (const s of mirrored) {
+      for (const s of pageStickers) {
         cells += s !== null
           ? `<div class="cell">${instrCell}</div>`
           : `<div class="cell empty"></div>`;
