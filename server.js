@@ -854,7 +854,7 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
       participant: {
         nickname: sticker.nickname, sticker_id: sticker.id, event_id: sticker.eid,
         event_name: sticker.event_name, org_name: sticker.org_name, ends_at: sticker.ends_at,
-        photo_url: profile.rows[0]?.photo_url || null, slogan: profile.rows[0]?.slogan || null,
+        photo_url: profile.rows[0]?.photo_url || null, intro: profile.rows[0]?.intro || null,
       }
     });
   } catch (err) {
@@ -872,7 +872,7 @@ app.get('/api/participant/me', requireParticipantSession, async (req, res) => {
         nickname: req.session.nickname, sticker_id: req.session.sticker_id,
         event_id: req.session.event_id, event_name: req.session.event_name,
         ends_at: req.session.ends_at, timezone: req.session.timezone,
-        photo_url: profile.rows[0]?.photo_url || null, slogan: profile.rows[0]?.slogan || null,
+        photo_url: profile.rows[0]?.photo_url || null, intro: profile.rows[0]?.intro || null,
       }
     });
   } catch (err) {
@@ -881,19 +881,19 @@ app.get('/api/participant/me', requireParticipantSession, async (req, res) => {
 });
 
 app.put('/api/participant/profile', requireParticipantSession, async (req, res) => {
-  const { photo_url, slogan } = req.body;
-  if (slogan && slogan.length > 100) return res.status(400).json({ success: false, error: 'slogan max 100 chars' });
+  const { photo_url, intro } = req.body;
+  if (intro && intro.length > 100) return res.status(400).json({ success: false, error: 'intro max 100 chars' });
   try {
     const existing = await pool.query('SELECT id FROM profile WHERE sticker_id = $1', [req.session.sticker_id]);
     if (existing.rows.length > 0) {
       await pool.query(
-        'UPDATE profile SET photo_url = COALESCE($1, photo_url), slogan = COALESCE($2, slogan), updated_at = NOW() WHERE sticker_id = $3',
-        [photo_url || null, slogan || null, req.session.sticker_id]
+        'UPDATE profile SET photo_url = COALESCE($1, photo_url), intro = COALESCE($2, intro), updated_at = NOW() WHERE sticker_id = $3',
+        [photo_url || null, intro || null, req.session.sticker_id]
       );
     } else {
       await pool.query(
-        'INSERT INTO profile (sticker_id, photo_url, slogan, updated_at) VALUES ($1, $2, $3, NOW())',
-        [req.session.sticker_id, photo_url || null, slogan || null]
+        'INSERT INTO profile (sticker_id, photo_url, intro, updated_at) VALUES ($1, $2, $3, NOW())',
+        [req.session.sticker_id, photo_url || null, intro || null]
       );
     }
     res.json({ success: true });
@@ -911,7 +911,7 @@ app.get('/api/search', requireParticipantSession, async (req, res) => {
   if (!q || q.length < 1) return res.json({ success: true, participants: [] });
   try {
     const result = await pool.query(
-      `SELECT s.id as sticker_id, s.nickname, p.photo_url, p.slogan
+      `SELECT s.id as sticker_id, s.nickname, p.photo_url, p.intro
        FROM sticker s LEFT JOIN profile p ON p.sticker_id = s.id
        WHERE s.event_id = $1 AND s.status = 'active' AND s.id != $2 AND UPPER(s.nickname) LIKE UPPER($3)
        ORDER BY s.nickname ASC LIMIT 10`,
@@ -937,7 +937,7 @@ app.get('/api/search', requireParticipantSession, async (req, res) => {
 app.get('/api/participants/:nickname', requireParticipantSession, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT s.id as sticker_id, s.nickname, p.photo_url, p.slogan
+      `SELECT s.id as sticker_id, s.nickname, p.photo_url, p.intro
        FROM sticker s LEFT JOIN profile p ON p.sticker_id = s.id
        WHERE s.event_id = $1 AND UPPER(s.nickname) = UPPER($2) AND s.status = 'active' AND s.id != $3`,
       [req.session.event_id, req.params.nickname, req.session.sticker_id]
@@ -1004,7 +1004,7 @@ app.put('/api/requests/:id', requireParticipantSession, async (req, res) => {
 app.get('/api/requests/incoming', requireParticipantSession, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT r.*, s.nickname as seeker_nickname, p.photo_url, p.slogan FROM request r
+      `SELECT r.*, s.nickname as seeker_nickname, p.photo_url, p.intro FROM request r
        JOIN sticker s ON r.seeker_id = s.id LEFT JOIN profile p ON p.sticker_id = s.id
        WHERE r.target_id = $1 AND r.event_id = $2 AND r.status = 'pending' AND r.expires_at > NOW() ORDER BY r.sent_at DESC`,
       [req.session.sticker_id, req.session.event_id]
@@ -1570,7 +1570,7 @@ app.listen(PORT, '0.0.0.0', async () => {
 
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker (id SERIAL PRIMARY KEY, event_id INTEGER REFERENCES event(id), nickname VARCHAR(50) NOT NULL, code VARCHAR(10) NOT NULL, status VARCHAR(20) DEFAULT 'unused', activated_at TIMESTAMP, invalidated_at TIMESTAMP, invalidated_by VARCHAR(50), created_at TIMESTAMP DEFAULT NOW(), UNIQUE(event_id, code))`);
     await pool.query(`CREATE TABLE IF NOT EXISTS session (id SERIAL PRIMARY KEY, sticker_id INTEGER REFERENCES sticker(id), event_id INTEGER REFERENCES event(id), token VARCHAR(64) UNIQUE NOT NULL, created_at TIMESTAMP DEFAULT NOW(), expires_at TIMESTAMP NOT NULL, last_seen_at TIMESTAMP, ip_address VARCHAR(45))`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS profile (id SERIAL PRIMARY KEY, sticker_id INTEGER REFERENCES sticker(id) UNIQUE, photo_url TEXT, slogan VARCHAR(100), updated_at TIMESTAMP DEFAULT NOW())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS profile (id SERIAL PRIMARY KEY, sticker_id INTEGER REFERENCES sticker(id) UNIQUE, photo_url TEXT, intro VARCHAR(30), updated_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS request (id SERIAL PRIMARY KEY, seeker_id INTEGER REFERENCES sticker(id), target_id INTEGER REFERENCES sticker(id), event_id INTEGER REFERENCES event(id), message VARCHAR(200) NOT NULL, sent_at TIMESTAMP DEFAULT NOW(), expires_at TIMESTAMP, status VARCHAR(20) DEFAULT 'pending', responded_at TIMESTAMP)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS chat (id SERIAL PRIMARY KEY, request_id INTEGER REFERENCES request(id), event_id INTEGER REFERENCES event(id), seeker_id INTEGER REFERENCES sticker(id), target_id INTEGER REFERENCES sticker(id), started_at TIMESTAMP DEFAULT NOW(), ends_at TIMESTAMP, status VARCHAR(20) DEFAULT 'active', blocked_by INTEGER REFERENCES sticker(id), blocked_at TIMESTAMP)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS message (id SERIAL PRIMARY KEY, chat_id INTEGER REFERENCES chat(id), sender_id INTEGER REFERENCES sticker(id), text TEXT NOT NULL, sent_at TIMESTAMP DEFAULT NOW())`);
@@ -1606,6 +1606,8 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS export_id VARCHAR(40)`);
     await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS csv_hash VARCHAR(64)`);
     await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS reference_id TEXT`);
+    await pool.query(`ALTER TABLE profile RENAME COLUMN intro TO intro`)
+      .catch(() => {}); 
     console.log('DB schema v8.0.0 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
