@@ -679,7 +679,6 @@ app.get('/api/events/:id/print', requireEventAdminAuth, async (req, res) => {
     const endTime = new Date(e.ends_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     const dateTime = `${startStr} · ${startTime} – ${endTime}`;
     const fee = (req.query.fee || '').trim().slice(0, 20);
-    const fee = (req.query.fee || '').trim().slice(0, 20);
 
     const perPage = 12;
     const total = stickers.rows.length;
