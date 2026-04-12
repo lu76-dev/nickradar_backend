@@ -1079,6 +1079,7 @@ app.get('/api/chats', requireParticipantSession, async (req, res) => {
       `SELECT c.*,
         CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
         CASE WHEN c.seeker_id = $1 THEN p2.photo_url ELSE p1.photo_url END as other_photo,
+        CASE WHEN c.seeker_id = $1 THEN p2.intro ELSE p1.intro END as other_intro,
         (SELECT m.sender_id FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_sender_id,
         (SELECT m.text FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_message
        FROM chat c JOIN sticker s1 ON c.seeker_id = s1.id JOIN sticker s2 ON c.target_id = s2.id
