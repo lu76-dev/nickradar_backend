@@ -1249,6 +1249,22 @@ app.get('/api/admin/events', requireAdminKey, async (req, res) => {
   }
 });
 
+app.get('/api/admin/events/:id', requireAdminKey, async (req, res) => {
+  try {
+    const event = await pool.query('SELECT * FROM event WHERE id = $1', [req.params.id]);
+    if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    const stickers = await pool.query('SELECT * FROM sticker WHERE event_id = $1 ORDER BY id ASC', [req.params.id]);
+    const conns = await pool.query(
+      `SELECT c.id, s1.id as seeker_id, s2.id as target_id, s1.nickname as seeker_nick, s2.nickname as target_nick
+       FROM chat c JOIN sticker s1 ON c.seeker_id=s1.id JOIN sticker s2 ON c.target_id=s2.id
+       WHERE c.event_id=$1 AND c.status='active'`, [req.params.id]
+    );
+    res.json({ success: true, event: event.rows[0], stickers: stickers.rows, connections: conns.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.get('/api/admin/events/:id/stickers', requireAdminKey, async (req, res) => {
   try {
     const stickers = await pool.query('SELECT * FROM sticker WHERE event_id = $1 ORDER BY id ASC', [req.params.id]);
