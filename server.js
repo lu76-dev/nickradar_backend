@@ -828,21 +828,15 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
     if (!sticker.paid) return res.status(403).json({ success: false, error: 'event not ready yet' });
     if (sticker.status === 'invalidated') return res.status(403).json({ success: false, error: 'sticker invalidated, please get a new one' });
     if (sticker.status === 'blocked') return res.status(403).json({ success: false, error: 'sticker blocked' });
-    const existingSession = await pool.query('SELECT * FROM session WHERE sticker_id = $1 AND expires_at > NOW()', [sticker.id]);
-    let token;
-    if (existingSession.rows.length > 0) {
-      token = existingSession.rows[0].token;
-      await pool.query('UPDATE session SET last_seen_at = NOW() WHERE token = $1', [token]);
-    } else {
-      token = crypto.randomBytes(32).toString('hex');
-      await pool.query(
-        `INSERT INTO session (sticker_id, event_id, token, created_at, expires_at, last_seen_at, ip_address) VALUES ($1, $2, $3, NOW(), $4, NOW(), $5)`,
-        [sticker.id, sticker.eid, token, sticker.ends_at, ip]
-      );
-      if (sticker.status === 'unused') {
-        await pool.query("UPDATE sticker SET status = 'active', activated_at = NOW() WHERE id = $1", [sticker.id]);
-        await pool.query('UPDATE event SET activated_count = activated_count + 1 WHERE id = $1', [sticker.eid]);
-      }
+    await pool.query('DELETE FROM session WHERE sticker_id = $1', [sticker.id]);
+    const token = crypto.randomBytes(32).toString('hex');
+    await pool.query(
+      `INSERT INTO session (sticker_id, event_id, token, created_at, expires_at, last_seen_at, ip_address) VALUES ($1, $2, $3, NOW(), $4, NOW(), $5)`,
+      [sticker.id, sticker.eid, token, sticker.ends_at, ip]
+    );
+    if (sticker.status === 'unused') {
+      await pool.query("UPDATE sticker SET status = 'active', activated_at = NOW() WHERE id = $1", [sticker.id]);
+      await pool.query('UPDATE event SET activated_count = activated_count + 1 WHERE id = $1', [sticker.eid]);
     }
     if (sticker.event_status === 'pending') {
       await pool.query("UPDATE event SET status = 'active' WHERE id = $1", [sticker.eid]);
