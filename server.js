@@ -575,11 +575,8 @@ app.get('/api/events/:id/connections', requireEventAdminAuth, async (req, res) =
     if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
 
     const result = await pool.query(
-      `SELECT c.seeker_id, c.target_id, s1.nickname as seeker_nick, s2.nickname as target_nick
-       FROM chat c
-       JOIN sticker s1 ON c.seeker_id = s1.id
-       JOIN sticker s2 ON c.target_id = s2.id
-       WHERE c.event_id = $1 AND c.status = 'active'`,
+      `SELECT sticker_id_a as seeker_id, sticker_id_b as target_id, nickname_a as seeker_nick, nickname_b as target_nick
+       FROM connection_log WHERE event_id = $1`,
       [req.params.id]
     );
     res.json({ success: true, connections: result.rows });
@@ -641,18 +638,56 @@ app.post('/api/events/:id/stickers/add', requireEventAdminAuth, async (req, res)
 // STICKERS
 // ============================================================
 
-app.post('/api/stickers/:id/invalidate', requireEventAdminAuth, async (req, res) => {
+app.post('/api/stickers/:id/deactivate', requireEventAdminAuth, async (req, res) => {
   try {
     const sticker = await pool.query(
       'SELECT s.* FROM sticker s JOIN event e ON s.event_id = e.id WHERE s.id = $1 AND e.admin_id = $2',
       [req.params.id, req.adminId]
     );
     if (sticker.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
-    await pool.query(
-      "UPDATE sticker SET status = 'invalidated', invalidated_at = NOW(), invalidated_by = 'event_admin' WHERE id = $1",
-      [req.params.id]
+    const sid = req.params.id;
+    await pool.query('DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE seeker_id = $1 OR target_id = $1)', [sid]);
+    await pool.query('DELETE FROM chat WHERE seeker_id = $1 OR target_id = $1', [sid]);
+    await pool.query('DELETE FROM profile WHERE sticker_id = $1', [sid]);
+    await pool.query('DELETE FROM session WHERE sticker_id = $1', [sid]);
+    await pool.query("UPDATE sticker SET status = 'deactivated' WHERE id = $1", [sid]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/stickers/:id/reactivate', requireEventAdminAuth, async (req, res) => {
+  try {
+    const sticker = await pool.query(
+      'SELECT s.* FROM sticker s JOIN event e ON s.event_id = e.id WHERE s.id = $1 AND e.admin_id = $2',
+      [req.params.id, req.adminId]
     );
-    await pool.query("UPDATE session SET expires_at = NOW() WHERE sticker_id = $1", [req.params.id]);
+    if (sticker.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
+    await pool.query("UPDATE sticker SET status = 'unused' WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/stickers/:id/deactivate', requireAdminKey, async (req, res) => {
+  try {
+    const sid = req.params.id;
+    await pool.query('DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE seeker_id = $1 OR target_id = $1)', [sid]);
+    await pool.query('DELETE FROM chat WHERE seeker_id = $1 OR target_id = $1', [sid]);
+    await pool.query('DELETE FROM profile WHERE sticker_id = $1', [sid]);
+    await pool.query('DELETE FROM session WHERE sticker_id = $1', [sid]);
+    await pool.query("UPDATE sticker SET status = 'deactivated' WHERE id = $1", [sid]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/stickers/:id/reactivate', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query("UPDATE sticker SET status = 'unused' WHERE id = $1", [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
@@ -824,22 +859,20 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
     if (stickerResult.rows.length === 0) return res.status(404).json({ success: false, error: 'invalid code' });
     const sticker = stickerResult.rows[0];
     if (sticker.event_status === 'stopped' || sticker.event_status === 'finished') return res.status(403).json({ success: false, error: 'event has ended' });
+    if (sticker.event_status === 'pending') return res.status(403).json({ success: false, error: 'event has not started yet' });
     if (new Date(sticker.ends_at) < new Date()) return res.status(403).json({ success: false, error: 'event has ended' });
-    if (!sticker.paid) return res.status(403).json({ success: false, error: 'event not ready yet' });
     if (sticker.status === 'invalidated') return res.status(403).json({ success: false, error: 'sticker invalidated, please get a new one' });
-    if (sticker.status === 'blocked') return res.status(403).json({ success: false, error: 'sticker blocked' });
-    await pool.query('DELETE FROM session WHERE sticker_id = $1', [sticker.id]);
+    if (sticker.status === 'deactivated') return res.status(403).json({ success: false, error: 'access deactivated by event admin' });
+    const activeSession = await pool.query('SELECT id FROM session WHERE sticker_id = $1 AND expires_at > NOW()', [sticker.id]);
+    if (activeSession.rows.length > 0) return res.status(403).json({ success: false, error: 'already active on another device' });
     const token = crypto.randomBytes(32).toString('hex');
     await pool.query(
       `INSERT INTO session (sticker_id, event_id, token, created_at, expires_at, last_seen_at, ip_address) VALUES ($1, $2, $3, NOW(), $4, NOW(), $5)`,
       [sticker.id, sticker.eid, token, sticker.ends_at, ip]
     );
-    if (sticker.status === 'unused') {
-      await pool.query("UPDATE sticker SET status = 'active', activated_at = NOW() WHERE id = $1", [sticker.id]);
+    await pool.query("UPDATE sticker SET status = 'active', activated_at = COALESCE(activated_at, NOW()) WHERE id = $1", [sticker.id]);
+    if (!sticker.activated_at) {
       await pool.query('UPDATE event SET activated_count = activated_count + 1 WHERE id = $1', [sticker.eid]);
-    }
-    if (sticker.event_status === 'pending') {
-      await pool.query("UPDATE event SET status = 'active' WHERE id = $1", [sticker.eid]);
     }
     const profile = await pool.query('SELECT * FROM profile WHERE sticker_id = $1', [sticker.id]);
     res.json({
@@ -852,6 +885,21 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error('Participant login error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/participant/leave', requireParticipantSession, async (req, res) => {
+  const stickerId = req.session.sticker_id;
+  try {
+    await pool.query('DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE seeker_id = $1 OR target_id = $1)', [stickerId]);
+    await pool.query('DELETE FROM chat WHERE seeker_id = $1 OR target_id = $1', [stickerId]);
+    await pool.query('DELETE FROM profile WHERE sticker_id = $1', [stickerId]);
+    await pool.query('DELETE FROM session WHERE sticker_id = $1', [stickerId]);
+    await pool.query("UPDATE sticker SET status = 'unused' WHERE id = $1", [stickerId]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Leave error:', err);
     res.status(500).json({ success: false, error: 'server error' });
   }
 });
@@ -1060,7 +1108,19 @@ app.post('/api/chats/start', requireParticipantSession, async (req, res) => {
     const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [req.session.event_id]);
     const chat = await pool.query(`INSERT INTO chat (event_id, seeker_id, target_id, started_at, ends_at, status) VALUES ($1, $2, $3, NOW(), $4, 'active') RETURNING *`, [req.session.event_id, req.session.sticker_id, targetId, event.rows[0].ends_at]);
     await pool.query('INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW())', [chat.rows[0].id, req.session.sticker_id, message]);
-    await pool.query('UPDATE event SET connection_count = connection_count + 1 WHERE id = $1', [req.session.event_id]);
+    const idA = Math.min(req.session.sticker_id, targetId);
+    const idB = Math.max(req.session.sticker_id, targetId);
+    const seekerNick = req.session.nickname;
+    const targetNick = (await pool.query('SELECT nickname FROM sticker WHERE id = $1', [targetId])).rows[0].nickname;
+    const logResult = await pool.query(
+      `INSERT INTO connection_log (event_id, sticker_id_a, sticker_id_b, nickname_a, nickname_b, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT DO NOTHING`,
+      [req.session.event_id, idA, idB, idA === req.session.sticker_id ? seekerNick : targetNick, idA === req.session.sticker_id ? targetNick : seekerNick]
+    );
+    if (logResult.rowCount > 0) {
+      await pool.query('UPDATE event SET connection_count = connection_count + 1 WHERE id = $1', [req.session.event_id]);
+    }
     res.status(201).json({ success: true, chat_id: chat.rows[0].id });
   } catch (err) {
     console.error('Start chat error:', err);
@@ -1471,6 +1531,7 @@ async function finishEvent(eid, stoppedBy) {
     await pool.query("DELETE FROM session WHERE event_id = $1", [eid]);
     await pool.query("UPDATE sticker SET code = NULL WHERE event_id = $1", [eid]);
     await pool.query("DELETE FROM report WHERE event_id = $1", [eid]);
+    await pool.query("DELETE FROM connection_log WHERE event_id = $1", [eid]);
   } catch (err) {
     console.error('[finishEvent] Cleanup error:', err.message);
   }
@@ -1594,6 +1655,9 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS report (id SERIAL PRIMARY KEY, reporter_id INTEGER REFERENCES sticker(id), reported_id INTEGER REFERENCES sticker(id), event_id INTEGER REFERENCES event(id), reason VARCHAR(100) NOT NULL, details TEXT, created_at TIMESTAMP DEFAULT NOW(), handled_by_admin BOOLEAN DEFAULT FALSE)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS invoice (id SERIAL PRIMARY KEY, invoice_number VARCHAR(20) UNIQUE, admin_id INTEGER REFERENCES event_admin(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), total NUMERIC(10,2), currency VARCHAR(3) DEFAULT 'EUR', payment_provider VARCHAR(50), payment_id VARCHAR(255), paid_at TIMESTAMP, created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS connection_log (id SERIAL PRIMARY KEY, event_id INTEGER REFERENCES event(id), sticker_id_a INTEGER REFERENCES sticker(id), sticker_id_b INTEGER REFERENCES sticker(id), nickname_a VARCHAR(50), nickname_b VARCHAR(50), created_at TIMESTAMP DEFAULT NOW())`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS connection_log_unique ON connection_log (event_id, LEAST(sticker_id_a, sticker_id_b), GREATEST(sticker_id_a, sticker_id_b))`);
+    await pool.query(`ALTER TABLE sticker ALTER COLUMN code DROP NOT NULL`);
 
     await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved BOOLEAN DEFAULT FALSE`);
     await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`);
