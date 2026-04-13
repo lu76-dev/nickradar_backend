@@ -1574,7 +1574,7 @@ cron.schedule('* * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v8.0.0 running on port ${PORT}`);
+  console.log(`nickradar API v9.0.0 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
@@ -1689,7 +1689,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE admin_access_log ADD COLUMN IF NOT EXISTS reference_id TEXT`);
     await pool.query(`ALTER TABLE profile RENAME COLUMN intro TO intro`)
       .catch(() => {}); 
-    console.log('DB schema v8.0.0 ready');
+    console.log('DB schema v9.0.0 ready');
   } catch (err) {
     console.error('DB init error:', err.message);
   }
