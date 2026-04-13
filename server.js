@@ -1470,9 +1470,11 @@ app.get('/', (req, res) => {
 
 async function finishEvent(eid, stoppedBy) {
   await pool.query("UPDATE event SET status = 'finished', stopped_at = NOW(), stopped_by = $1, effective_start_at = COALESCE(effective_start_at, start_at), effective_end_at = COALESCE(effective_end_at, NOW()) WHERE id = $2", [stoppedBy, eid]);
-  await pool.query("UPDATE session SET expires_at = NOW() WHERE event_id = $1", [eid]);
-  await pool.query("UPDATE chat SET status = 'finished' WHERE event_id = $1 AND status = 'active'", [eid]);
   await pool.query("DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE event_id = $1)", [eid]);
+  await pool.query("DELETE FROM chat WHERE event_id = $1", [eid]);
+  await pool.query("DELETE FROM profile WHERE sticker_id IN (SELECT id FROM sticker WHERE event_id = $1)", [eid]);
+  await pool.query("DELETE FROM session WHERE event_id = $1", [eid]);
+  await pool.query("UPDATE sticker SET code = NULL WHERE event_id = $1", [eid]);
   await pool.query("DELETE FROM report WHERE event_id = $1", [eid]);
   try {
     const eventResult = await pool.query('SELECT * FROM event WHERE id = $1', [eid]);
