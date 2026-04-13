@@ -1569,6 +1569,34 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+cron.schedule('*/10 * * * *', async () => {
+  try {
+    const missing = await pool.query(
+      `SELECT id, admin_id FROM event WHERE status = 'finished' AND id NOT IN (SELECT event_id FROM invoice WHERE event_id IS NOT NULL)`
+    );
+    for (const row of missing.rows) {
+      try {
+        const packages = await pool.query('SELECT * FROM sticker_package WHERE event_id = $1 ORDER BY created_at ASC', [row.id]);
+        if (packages.rows.length === 0) continue;
+        const existing = await pool.query('SELECT id FROM invoice WHERE event_id = $1', [row.id]);
+        if (existing.rows.length > 0) continue;
+        let grandTotal = 0, grandQty = 0;
+        packages.rows.forEach(p => { grandTotal += calcPrice(p.quantity); grandQty += p.quantity; });
+        const invoiceNumber = await getNextInvoiceNumber();
+        await pool.query(
+          `INSERT INTO invoice (invoice_number, admin_id, event_id, quantity, unit_price, total, currency, payment_provider, created_at) VALUES ($1, $2, $3, $4, $5, $6, 'EUR', 'manual_recovery', NOW())`,
+          [invoiceNumber, row.admin_id, row.id, grandQty, (grandTotal / grandQty).toFixed(4), grandTotal.toFixed(2)]
+        );
+        console.log(`[CRON] Invoice recovered for event ${row.id}`);
+      } catch (err) {
+        console.error(`[CRON] Invoice recovery error for event ${row.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[CRON] Invoice check error:', err.message);
+  }
+});
+
 // ============================================================
 // SERVER START + DB INIT
 // ============================================================
