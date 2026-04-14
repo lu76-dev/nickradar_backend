@@ -992,96 +992,6 @@ app.get('/api/participants/:nickname', requireParticipantSession, async (req, re
 // REQUESTS
 // ============================================================
 
-app.post('/api/requests', requireParticipantSession, async (req, res) => {
-  const { target_nickname, message } = req.body;
-  if (!target_nickname || !message) return res.status(400).json({ success: false, error: 'target_nickname and message required' });
-  if (message.length < 2 || message.length > 200) return res.status(400).json({ success: false, error: 'message must be 2-200 chars' });
-  try {
-    const target = await pool.query("SELECT id FROM sticker WHERE UPPER(nickname) = UPPER($1) AND event_id = $2 AND status = 'active'", [target_nickname, req.session.event_id]);
-    if (target.rows.length === 0) return res.status(404).json({ success: false, error: 'participant not found' });
-    const targetId = target.rows[0].id;
-    if (targetId === req.session.sticker_id) return res.status(400).json({ success: false, error: 'cannot send request to yourself' });
-    const blockCheck = await pool.query(`SELECT id FROM request WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'no'`, [req.session.event_id, req.session.sticker_id, targetId]);
-    if (blockCheck.rows.length > 0) return res.status(403).json({ success: false, error: 'blocked' });
-    const chatBlockCheck = await pool.query(`SELECT id FROM chat WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'blocked'`, [req.session.event_id, req.session.sticker_id, targetId]);
-    if (chatBlockCheck.rows.length > 0) return res.status(403).json({ success: false, error: 'blocked' });
-    const existing = await pool.query("SELECT id FROM request WHERE seeker_id = $1 AND target_id = $2 AND event_id = $3 AND status = 'pending'", [req.session.sticker_id, targetId, req.session.event_id]);
-    if (existing.rows.length > 0) return res.status(409).json({ success: false, error: 'request already pending' });
-    const chatCheck = await pool.query(`SELECT id FROM chat WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'active'`, [req.session.event_id, req.session.sticker_id, targetId]);
-    if (chatCheck.rows.length > 0) return res.status(409).json({ success: false, error: 'already in active chat' });
-    const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [req.session.event_id]);
-    const result = await pool.query(`INSERT INTO request (seeker_id, target_id, event_id, message, sent_at, expires_at, status) VALUES ($1, $2, $3, $4, NOW(), $5, 'pending') RETURNING *`, [req.session.sticker_id, targetId, req.session.event_id, message, event.rows[0].ends_at]);
-    res.status(201).json({ success: true, request: result.rows[0] });
-  } catch (err) {
-    console.error('Request error:', err);
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
-
-app.put('/api/requests/:id', requireParticipantSession, async (req, res) => {
-  const { answer } = req.body;
-  if (!['yes', 'no'].includes(answer)) return res.status(400).json({ success: false, error: 'answer must be yes or no' });
-  try {
-    const request = await pool.query("SELECT * FROM request WHERE id = $1 AND target_id = $2 AND status = 'pending'", [req.params.id, req.session.sticker_id]);
-    if (request.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
-    const r = request.rows[0];
-    await pool.query('UPDATE request SET status = $1, responded_at = NOW() WHERE id = $2', [answer, r.id]);
-    if (answer === 'yes') {
-      const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [r.event_id]);
-      const chat = await pool.query(`INSERT INTO chat (request_id, event_id, seeker_id, target_id, started_at, ends_at, status) VALUES ($1, $2, $3, $4, NOW(), $5, 'active') RETURNING *`, [r.id, r.event_id, r.seeker_id, r.target_id, event.rows[0].ends_at]);
-      await pool.query('UPDATE event SET connection_count = connection_count + 1 WHERE id = $1', [r.event_id]);
-      await pool.query('INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW())', [chat.rows[0].id, r.seeker_id, r.message]);
-      return res.json({ success: true, chat: chat.rows[0] });
-    }
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Answer request error:', err);
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
-
-app.get('/api/requests/incoming', requireParticipantSession, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT r.*, s.nickname as seeker_nickname, p.photo_url, p.intro FROM request r
-       JOIN sticker s ON r.seeker_id = s.id LEFT JOIN profile p ON p.sticker_id = s.id
-       WHERE r.target_id = $1 AND r.event_id = $2 AND r.status = 'pending' AND r.expires_at > NOW() ORDER BY r.sent_at DESC`,
-      [req.session.sticker_id, req.session.event_id]
-    );
-    res.json({ success: true, requests: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
-
-app.get('/api/requests/outgoing', requireParticipantSession, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT r.*, s.nickname as target_nickname FROM request r JOIN sticker s ON r.target_id = s.id
-       WHERE r.seeker_id = $1 AND r.event_id = $2 AND r.status = 'pending' ORDER BY r.sent_at DESC`,
-      [req.session.sticker_id, req.session.event_id]
-    );
-    res.json({ success: true, requests: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
-
-app.get('/api/requests/history', requireParticipantSession, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT r.*, CASE WHEN r.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname
-       FROM request r JOIN sticker s1 ON r.seeker_id = s1.id JOIN sticker s2 ON r.target_id = s2.id
-       WHERE (r.seeker_id = $1 OR r.target_id = $1) AND r.event_id = $2 AND r.status IN ('yes', 'no', 'expired')
-       ORDER BY r.sent_at DESC`,
-      [req.session.sticker_id, req.session.event_id]
-    );
-    res.json({ success: true, history: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'server error' });
-  }
-});
-
 // ============================================================
 // CHATS + MESSAGES
 // ============================================================
@@ -1689,35 +1599,19 @@ app.listen(PORT, '0.0.0.0', async () => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    await pool.query(`
-      DO $$
-      BEGIN
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_name') THEN
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_phone') THEN
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='event' AND column_name='reports_contact_confirmed') THEN
-        END IF;
-      END $$;
-    `);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker (id SERIAL PRIMARY KEY, event_id INTEGER REFERENCES event(id), nickname VARCHAR(50) NOT NULL, code VARCHAR(10) NOT NULL, status VARCHAR(20) DEFAULT 'unused', activated_at TIMESTAMP, invalidated_at TIMESTAMP, invalidated_by VARCHAR(50), created_at TIMESTAMP DEFAULT NOW(), UNIQUE(event_id, code))`);
     await pool.query(`CREATE TABLE IF NOT EXISTS session (id SERIAL PRIMARY KEY, sticker_id INTEGER REFERENCES sticker(id), event_id INTEGER REFERENCES event(id), token VARCHAR(64) UNIQUE NOT NULL, created_at TIMESTAMP DEFAULT NOW(), expires_at TIMESTAMP NOT NULL, last_seen_at TIMESTAMP, ip_address VARCHAR(45))`);
     await pool.query(`CREATE TABLE IF NOT EXISTS profile (id SERIAL PRIMARY KEY, sticker_id INTEGER REFERENCES sticker(id) UNIQUE, photo_url TEXT, intro VARCHAR(30), updated_at TIMESTAMP DEFAULT NOW())`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS request (id SERIAL PRIMARY KEY, seeker_id INTEGER REFERENCES sticker(id), target_id INTEGER REFERENCES sticker(id), event_id INTEGER REFERENCES event(id), message VARCHAR(200) NOT NULL, sent_at TIMESTAMP DEFAULT NOW(), expires_at TIMESTAMP, status VARCHAR(20) DEFAULT 'pending', responded_at TIMESTAMP)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS chat (id SERIAL PRIMARY KEY, request_id INTEGER REFERENCES request(id), event_id INTEGER REFERENCES event(id), seeker_id INTEGER REFERENCES sticker(id), target_id INTEGER REFERENCES sticker(id), started_at TIMESTAMP DEFAULT NOW(), ends_at TIMESTAMP, status VARCHAR(20) DEFAULT 'active', blocked_by INTEGER REFERENCES sticker(id), blocked_at TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS chat (id SERIAL PRIMARY KEY, event_id INTEGER REFERENCES event(id), seeker_id INTEGER REFERENCES sticker(id), target_id INTEGER REFERENCES sticker(id), started_at TIMESTAMP DEFAULT NOW(), ends_at TIMESTAMP, status VARCHAR(20) DEFAULT 'active', blocked_by INTEGER REFERENCES sticker(id), blocked_at TIMESTAMP)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS message (id SERIAL PRIMARY KEY, chat_id INTEGER REFERENCES chat(id), sender_id INTEGER REFERENCES sticker(id), text TEXT NOT NULL, sent_at TIMESTAMP DEFAULT NOW())`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS report (id SERIAL PRIMARY KEY, reporter_id INTEGER REFERENCES sticker(id), reported_id INTEGER REFERENCES sticker(id), event_id INTEGER REFERENCES event(id), reason VARCHAR(100) NOT NULL, details TEXT, created_at TIMESTAMP DEFAULT NOW(), handled_by_admin BOOLEAN DEFAULT FALSE)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS report (id SERIAL PRIMARY KEY, reporter_id INTEGER REFERENCES sticker(id), reported_id INTEGER REFERENCES sticker(id), event_id INTEGER REFERENCES event(id), reason VARCHAR(100) NOT NULL, details TEXT, created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS invoice (id SERIAL PRIMARY KEY, invoice_number VARCHAR(20) UNIQUE, admin_id INTEGER REFERENCES event_admin(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), total NUMERIC(10,2), currency VARCHAR(3) DEFAULT 'EUR', payment_provider VARCHAR(50), payment_id VARCHAR(255), paid_at TIMESTAMP, created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS sticker_package (id SERIAL PRIMARY KEY, invoice_id INTEGER REFERENCES invoice(id), event_id INTEGER REFERENCES event(id), quantity INTEGER NOT NULL, unit_price NUMERIC(10,4), created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS connection_log (id SERIAL PRIMARY KEY, event_id INTEGER REFERENCES event(id), sticker_id_a INTEGER REFERENCES sticker(id), sticker_id_b INTEGER REFERENCES sticker(id), nickname_a VARCHAR(50), nickname_b VARCHAR(50), created_at TIMESTAMP DEFAULT NOW())`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS connection_log_unique ON connection_log (event_id, LEAST(sticker_id_a, sticker_id_b), GREATEST(sticker_id_a, sticker_id_b))`);
     await pool.query(`ALTER TABLE sticker ALTER COLUMN code DROP NOT NULL`);
 
-    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved BOOLEAN DEFAULT FALSE`);
-    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`);
-    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_by VARCHAR(100)`);
-    await pool.query(`ALTER TABLE report ADD COLUMN IF NOT EXISTS resolved_by_ip VARCHAR(45)`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_start_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS effective_end_at TIMESTAMP`);
     await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP`);
