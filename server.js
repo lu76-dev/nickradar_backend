@@ -1038,8 +1038,6 @@ app.post('/api/chats/start', requireParticipantSession, async (req, res) => {
 
 app.get('/api/chats', requireParticipantSession, async (req, res) => {
   try {
-    const sessionData = await pool.query('SELECT created_at FROM session WHERE sticker_id = $1 ORDER BY created_at DESC LIMIT 1', [req.session.sticker_id]);
-    const sessionStart = sessionData.rows[0]?.created_at || new Date(0);
     const result = await pool.query(
       `SELECT c.*,
         CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
@@ -1050,13 +1048,9 @@ app.get('/api/chats', requireParticipantSession, async (req, res) => {
        FROM chat c JOIN sticker s1 ON c.seeker_id = s1.id JOIN sticker s2 ON c.target_id = s2.id
        LEFT JOIN profile p1 ON p1.sticker_id = s1.id LEFT JOIN profile p2 ON p2.sticker_id = s2.id
        WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2
-         AND (
-           (c.status = 'active' AND c.started_at >= ($3::timestamp - interval '5 seconds'))
-           OR
-           (c.status = 'left' AND c.started_at >= ($3::timestamp - interval '5 seconds'))
-         )
+         AND c.status IN ('active', 'left')
        ORDER BY c.started_at DESC`,
-      [req.session.sticker_id, req.session.event_id, sessionStart]
+      [req.session.sticker_id, req.session.event_id]
     );
     res.json({ success: true, chats: result.rows });
   } catch (err) {
