@@ -1141,7 +1141,7 @@ app.get('/api/chats', requireParticipantSession, async (req, res) => {
        LEFT JOIN profile p1 ON p1.sticker_id = s1.id LEFT JOIN profile p2 ON p2.sticker_id = s2.id
        WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2
          AND (
-           (c.status = 'active' AND c.started_at >= $3)
+           (c.status = 'active' AND c.started_at >= ($3::timestamp - interval '5 seconds'))
            OR
            c.status = 'left'
          )
@@ -1183,7 +1183,7 @@ app.get('/api/messages/:chatId', requireParticipantSession, async (req, res) => 
     const chat = await pool.query('SELECT * FROM chat WHERE id = $1 AND (seeker_id = $2 OR target_id = $2)', [req.params.chatId, req.session.sticker_id]);
     if (chat.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
     const messages = await pool.query(`SELECT m.*, s.nickname as sender_nickname FROM message m JOIN sticker s ON m.sender_id = s.id WHERE m.chat_id = $1 ORDER BY m.sent_at ASC`, [req.params.chatId]);
-    res.json({ success: true, messages: messages.rows });
+    res.json({ success: true, messages: messages.rows, chatStatus: chat.rows[0].status });
   } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
   }
