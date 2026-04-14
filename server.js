@@ -1444,7 +1444,7 @@ app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) =
        FROM chat c
        JOIN sticker s1 ON c.seeker_id = s1.id
        JOIN sticker s2 ON c.target_id = s2.id
-       WHERE c.event_id = $1 AND c.status != 'superseded'
+       WHERE c.event_id = $1 AND c.status IN ('active', 'left', 'superseded', 'blocked', 'finished')
        ORDER BY s1.nickname, s2.nickname, c.started_at ASC`,
       [req.params.id]
     );
