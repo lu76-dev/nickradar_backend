@@ -646,8 +646,7 @@ app.post('/api/stickers/:id/deactivate', requireEventAdminAuth, async (req, res)
     );
     if (sticker.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
     const sid = req.params.id;
-    await pool.query('DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE seeker_id = $1 OR target_id = $1)', [sid]);
-    await pool.query('DELETE FROM chat WHERE seeker_id = $1 OR target_id = $1', [sid]);
+    await pool.query("UPDATE chat SET status = 'left' WHERE (seeker_id = $1 OR target_id = $1) AND status = 'active'", [sid]);
     await pool.query('DELETE FROM profile WHERE sticker_id = $1', [sid]);
     await pool.query('DELETE FROM session WHERE sticker_id = $1', [sid]);
     await pool.query("UPDATE sticker SET status = 'deactivated' WHERE id = $1", [sid]);
@@ -674,8 +673,7 @@ app.post('/api/stickers/:id/reactivate', requireEventAdminAuth, async (req, res)
 app.post('/api/admin/stickers/:id/deactivate', requireAdminKey, async (req, res) => {
   try {
     const sid = req.params.id;
-    await pool.query('DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE seeker_id = $1 OR target_id = $1)', [sid]);
-    await pool.query('DELETE FROM chat WHERE seeker_id = $1 OR target_id = $1', [sid]);
+    await pool.query("UPDATE chat SET status = 'left' WHERE (seeker_id = $1 OR target_id = $1) AND status = 'active'", [sid]);
     await pool.query('DELETE FROM profile WHERE sticker_id = $1', [sid]);
     await pool.query('DELETE FROM session WHERE sticker_id = $1', [sid]);
     await pool.query("UPDATE sticker SET status = 'deactivated' WHERE id = $1", [sid]);
@@ -892,8 +890,7 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
 app.post('/api/participant/leave', requireParticipantSession, async (req, res) => {
   const stickerId = req.session.sticker_id;
   try {
-    await pool.query('DELETE FROM message WHERE chat_id IN (SELECT id FROM chat WHERE seeker_id = $1 OR target_id = $1)', [stickerId]);
-    await pool.query('DELETE FROM chat WHERE seeker_id = $1 OR target_id = $1', [stickerId]);
+    await pool.query("UPDATE chat SET status = 'left' WHERE (seeker_id = $1 OR target_id = $1) AND status = 'active'", [stickerId]);
     await pool.query('DELETE FROM profile WHERE sticker_id = $1', [stickerId]);
     await pool.query('DELETE FROM session WHERE sticker_id = $1', [stickerId]);
     await pool.query("UPDATE sticker SET status = 'unused' WHERE id = $1", [stickerId]);
@@ -1105,6 +1102,7 @@ app.post('/api/chats/start', requireParticipantSession, async (req, res) => {
       await pool.query('INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW())', [existing.rows[0].id, req.session.sticker_id, message]);
       return res.json({ success: true, chat_id: existing.rows[0].id });
     }
+    await pool.query(`UPDATE chat SET status = 'superseded' WHERE event_id = $1 AND ((seeker_id = $2 AND target_id = $3) OR (seeker_id = $3 AND target_id = $2)) AND status = 'left'`, [req.session.event_id, req.session.sticker_id, targetId]);
     const event = await pool.query('SELECT ends_at FROM event WHERE id = $1', [req.session.event_id]);
     const chat = await pool.query(`INSERT INTO chat (event_id, seeker_id, target_id, started_at, ends_at, status) VALUES ($1, $2, $3, NOW(), $4, 'active') RETURNING *`, [req.session.event_id, req.session.sticker_id, targetId, event.rows[0].ends_at]);
     await pool.query('INSERT INTO message (chat_id, sender_id, text, sent_at) VALUES ($1, $2, $3, NOW())', [chat.rows[0].id, req.session.sticker_id, message]);
@@ -1130,6 +1128,8 @@ app.post('/api/chats/start', requireParticipantSession, async (req, res) => {
 
 app.get('/api/chats', requireParticipantSession, async (req, res) => {
   try {
+    const sessionData = await pool.query('SELECT created_at FROM session WHERE sticker_id = $1 ORDER BY created_at DESC LIMIT 1', [req.session.sticker_id]);
+    const sessionStart = sessionData.rows[0]?.created_at || new Date(0);
     const result = await pool.query(
       `SELECT c.*,
         CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
@@ -1139,9 +1139,14 @@ app.get('/api/chats', requireParticipantSession, async (req, res) => {
         (SELECT m.text FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_message
        FROM chat c JOIN sticker s1 ON c.seeker_id = s1.id JOIN sticker s2 ON c.target_id = s2.id
        LEFT JOIN profile p1 ON p1.sticker_id = s1.id LEFT JOIN profile p2 ON p2.sticker_id = s2.id
-       WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2 AND c.status = 'active'
+       WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2
+         AND (
+           (c.status = 'active' AND c.started_at >= $3)
+           OR
+           c.status = 'left'
+         )
        ORDER BY c.started_at DESC`,
-      [req.session.sticker_id, req.session.event_id]
+      [req.session.sticker_id, req.session.event_id, sessionStart]
     );
     res.json({ success: true, chats: result.rows });
   } catch (err) {
@@ -1433,21 +1438,43 @@ app.get('/api/admin/events/:id/chat-export', requireAdminKey, async (req, res) =
     const event = await pool.query('SELECT * FROM event WHERE id = $1', [req.params.id]);
     if (event.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
     if (event.rows[0].status !== 'active') return res.status(403).json({ success: false, error: 'only available for active events' });
-    const messages = await pool.query(
-      `SELECT s1.nickname as sender_nickname, s2.nickname as receiver_nickname, m.text as message, m.sent_at as timestamp
-       FROM message m
-       JOIN chat c ON m.chat_id = c.id
-       JOIN sticker s1 ON m.sender_id = s1.id
-       JOIN sticker s2 ON (CASE WHEN c.seeker_id = m.sender_id THEN c.target_id ELSE c.seeker_id END) = s2.id
-       WHERE c.event_id = $1
-       ORDER BY m.sent_at ASC`,
+    const chatsForExport = await pool.query(
+      `SELECT c.id, c.started_at, c.status,
+        s1.nickname as seeker_nickname, s2.nickname as target_nickname
+       FROM chat c
+       JOIN sticker s1 ON c.seeker_id = s1.id
+       JOIN sticker s2 ON c.target_id = s2.id
+       WHERE c.event_id = $1 AND c.status != 'superseded'
+       ORDER BY s1.nickname, s2.nickname, c.started_at ASC`,
       [req.params.id]
     );
-    const header = 'sender_nickname,receiver_nickname,message,timestamp\n';
-    const csvRows = messages.rows.map(r => {
-      const msg = r.message.replace(/"/g, '""');
-      return `"${r.sender_nickname}","${r.receiver_nickname}","${msg}","${new Date(r.timestamp).toISOString()}"`;
-    }).join('\n');
+    const allMessages = await pool.query(
+      `SELECT m.chat_id, s.nickname as sender_nickname, m.text as message, m.sent_at as timestamp
+       FROM message m
+       JOIN sticker s ON m.sender_id = s.id
+       WHERE m.chat_id = ANY($1::int[])
+       ORDER BY m.sent_at ASC`,
+      [chatsForExport.rows.map(ch => ch.id)]
+    );
+    const msgByChatId = {};
+    allMessages.rows.forEach(m => {
+      if (!msgByChatId[m.chat_id]) msgByChatId[m.chat_id] = [];
+      msgByChatId[m.chat_id].push(m);
+    });
+    const header = 'session,timestamp,sender,receiver,message\n';
+    const csvLines = [];
+    chatsForExport.rows.forEach(ch => {
+      const sessionLabel = `session: ${new Date(ch.started_at).toISOString()} | started by: ${ch.seeker_nickname}`;
+      csvLines.push(`"--- ${sessionLabel} ---","","","",""`);
+      const msgs = msgByChatId[ch.id] || [];
+      msgs.forEach(m => {
+        const receiver = m.sender_nickname === ch.seeker_nickname ? ch.target_nickname : ch.seeker_nickname;
+        const msg = m.message.replace(/"/g, '""');
+        csvLines.push(`"","${new Date(m.timestamp).toISOString()}","${m.sender_nickname}","${receiver}","${msg}"`);
+      });
+    });
+    const messages = { rows: allMessages.rows };
+    const csvRows = csvLines.join('\n');
     const csv = header + csvRows;
     const csvHash = crypto.createHash('sha256').update(csv).digest('hex');
     const auditTimestamp = new Date().toISOString();
