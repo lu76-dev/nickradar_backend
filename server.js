@@ -88,6 +88,7 @@ async function requireParticipantSession(req, res, next) {
       return res.status(401).json({ success: false, error: 'event ended' });
     }
     req.session = s;
+    res.setHeader('Cache-Control', 'no-store');
     await pool.query('UPDATE session SET last_seen_at = NOW() WHERE token = $1', [token]);
     next();
   } catch (err) {
