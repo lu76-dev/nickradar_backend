@@ -1039,19 +1039,29 @@ app.post('/api/chats/start', requireParticipantSession, async (req, res) => {
 
 app.get('/api/chats', requireParticipantSession, async (req, res) => {
   try {
+    const sessionStart = req.session.created_at;
     const result = await pool.query(
       `SELECT c.*,
         CASE WHEN c.seeker_id = $1 THEN s2.nickname ELSE s1.nickname END as other_nickname,
         CASE WHEN c.seeker_id = $1 THEN p2.photo_url ELSE p1.photo_url END as other_photo,
         CASE WHEN c.seeker_id = $1 THEN p2.intro ELSE p1.intro END as other_intro,
         (SELECT m.sender_id FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_sender_id,
-        (SELECT m.text FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_message
+        (SELECT m.text FROM message m WHERE m.chat_id = c.id ORDER BY m.sent_at DESC LIMIT 1) as last_message,
+        CASE
+          WHEN c.status = 'blocked' AND c.blocked_by = $1 THEN 'blocked by you'
+          WHEN c.status = 'blocked' AND c.blocked_by != $1 THEN 'blocked by other'
+          ELSE NULL
+        END as blocked_label
        FROM chat c JOIN sticker s1 ON c.seeker_id = s1.id JOIN sticker s2 ON c.target_id = s2.id
        LEFT JOIN profile p1 ON p1.sticker_id = s1.id LEFT JOIN profile p2 ON p2.sticker_id = s2.id
        WHERE (c.seeker_id = $1 OR c.target_id = $1) AND c.event_id = $2
-         AND c.status IN ('active', 'left')
+         AND c.status IN ('active', 'left', 'blocked')
+         AND (
+           c.status = 'blocked'
+           OR c.started_at >= ($3::timestamp - interval '5 seconds')
+         )
        ORDER BY c.started_at DESC`,
-      [req.session.sticker_id, req.session.event_id]
+      [req.session.sticker_id, req.session.event_id, sessionStart]
     );
     res.json({ success: true, chats: result.rows });
   } catch (err) {
@@ -1447,7 +1457,7 @@ app.get('/api/admin/access-log', requireAdminKey, async (req, res) => {
 // ============================================================
 
 app.get('/', (req, res) => {
-  res.json({ message: 'nickradar API v8.0.0', status: 'running' });
+  res.json({ message: 'nickradar API v9.0.4', status: 'running' });
 });
 
 // ============================================================
@@ -1534,7 +1544,7 @@ cron.schedule('*/10 * * * *', async () => {
 // ============================================================
 
 app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`nickradar API v9.0.0 running on port ${PORT}`);
+  console.log(`nickradar API v9.0.4 running on port ${PORT}`);
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS event_admin (
