@@ -1143,7 +1143,7 @@ app.get('/api/chats', requireParticipantSession, async (req, res) => {
          AND (
            (c.status = 'active' AND c.started_at >= ($3::timestamp - interval '5 seconds'))
            OR
-           c.status = 'left'
+           (c.status = 'left' AND c.started_at >= ($3::timestamp - interval '5 seconds'))
          )
        ORDER BY c.started_at DESC`,
       [req.session.sticker_id, req.session.event_id, sessionStart]
