@@ -384,21 +384,21 @@ app.get('/api/event-admin/me', requireEventAdminAuth, async (req, res) => {
 app.put('/api/event-admin/profile', requireEventAdminAuth, async (req, res) => {
   const { street, street_number, postal_code, city, vat } = req.body;
   try {
-    const current = await pool.query('SELECT street, street_number, postal_code, city, vat FROM event_admin WHERE id = $1', [req.adminId]);
+    const current = await pool.query('SELECT street, street_number, postal_code, city, vat, status FROM event_admin WHERE id = $1', [req.adminId]);
     if (current.rows.length === 0) return res.status(404).json({ success: false, error: 'not found' });
     const c = current.rows[0];
+    const newStreet = c.street || street || null;
+    const newStreetNumber = c.street_number || street_number || null;
+    const newPostal = c.postal_code || postal_code || null;
+    const newCity = c.city || city || null;
+    const newVat = c.vat || vat || null;
+    const billingComplete = !!(newStreet && newStreetNumber && newPostal && newCity);
+    const newStatus = (c.status === 'active') ? 'active' : (billingComplete ? 'review' : c.status);
     await pool.query(
-      'UPDATE event_admin SET street=$1, street_number=$2, postal_code=$3, city=$4, vat=$5 WHERE id=$6',
-      [
-        c.street || street || null,
-        c.street_number || street_number || null,
-        c.postal_code || postal_code || null,
-        c.city || city || null,
-        c.vat || vat || null,
-        req.adminId
-      ]
+      'UPDATE event_admin SET street=$1, street_number=$2, postal_code=$3, city=$4, vat=$5, status=$6 WHERE id=$7',
+      [newStreet, newStreetNumber, newPostal, newCity, newVat, newStatus, req.adminId]
     );
-    res.json({ success: true });
+    res.json({ success: true, status: newStatus });
   } catch (err) {
     console.error('Profile update error:', err);
     res.status(500).json({ success: false, error: 'server error' });
@@ -1170,6 +1170,15 @@ app.put('/api/admin/event-admin/:id/profile', requireAdminKey, async (req, res) 
     res.json({ success: true });
   } catch (err) {
     console.error('Admin profile update error:', err);
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
+app.post('/api/admin/event-admin/:id/activate', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query("UPDATE event_admin SET status = 'active' WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
     res.status(500).json({ success: false, error: 'server error' });
   }
 });
