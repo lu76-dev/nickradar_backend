@@ -1183,6 +1183,15 @@ app.post('/api/admin/event-admin/:id/activate', requireAdminKey, async (req, res
   }
 });
 
+app.post('/api/admin/event-admin/:id/deactivate-to-review', requireAdminKey, async (req, res) => {
+  try {
+    await pool.query("UPDATE event_admin SET status = 'review' WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'server error' });
+  }
+});
+
 app.post('/api/admin/event-admin/:id/block', requireAdminKey, async (req, res) => {
   try {
     await pool.query("UPDATE event_admin SET status = 'blocked' WHERE id = $1", [req.params.id]);
