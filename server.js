@@ -334,7 +334,7 @@ app.post('/api/event-admin/verify', loginLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'invalid or expired verification link' });
     }
     await pool.query(
-      "UPDATE event_admin SET email_verified = TRUE, status = 'active', verification_token = NULL, verification_token_expires_at = NULL WHERE id = $1",
+      "UPDATE event_admin SET email_verified = TRUE, status = 'verified', verification_token = NULL, verification_token_expires_at = NULL WHERE id = $1",
       [result.rows[0].id]
     );
     res.json({ success: true, message: 'email verified — you can now log in' });
