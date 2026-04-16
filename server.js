@@ -312,7 +312,7 @@ app.post('/api/event-admin/register', loginLimiter, async (req, res) => {
     sendEmail(
       'info@nickradar.com',
       'nickradar — New EA Registration',
-      `New Event Admin registered:\n\nOrg: ${org_name}\nContact: ${contact_name}\nEmail: ${mail}\nBusiness Type: ${businessType}\nCountry: ${country}\n\nnickradar`
+      `New Event Admin registered:\n\nOrg: ${org_name}\nContact: ${contact_name}\nEmail: ${mail}\nBusiness Type: ${business_type}\nCountry: ${country}\n\nnickradar`
     );
 
     res.status(201).json({ success: true, message: 'registration received — please check your email to verify your account' });
