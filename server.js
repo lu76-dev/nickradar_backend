@@ -309,6 +309,11 @@ app.post('/api/event-admin/register', loginLimiter, async (req, res) => {
       'nickradar — Please verify your email',
       `Hello ${org_name},\n\nThank you for registering with nickradar.\n\nPlease verify your email address by clicking the link below:\n\n${verifyUrl}\n\nThis link expires in 24 hours.\n\nnickradar`
     );
+    sendEmail(
+      'info@nickradar.com',
+      'nickradar — New EA Registration',
+      `New Event Admin registered:\n\nOrg: ${org_name}\nContact: ${contact_name}\nEmail: ${mail}\nBusiness Type: ${businessType}\nCountry: ${country}\n\nnickradar`
+    );
 
     res.status(201).json({ success: true, message: 'registration received — please check your email to verify your account' });
   } catch (err) {
@@ -365,7 +370,7 @@ app.get('/api/event-admin/me', requireEventAdminAuth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, org_name, contact_name, business_type, country, street, street_number, postal_code, city, vat,
-              email, status, created_at
+              email, status, created_at, last_login_at
        FROM event_admin WHERE id = $1`,
       [req.adminId]
     );
