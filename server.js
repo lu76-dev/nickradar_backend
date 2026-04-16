@@ -1581,6 +1581,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS street_number VARCHAR(20)`);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20)`);
     await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS city VARCHAR(100)`);
+    await pool.query(`ALTER TABLE event_admin ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`);
     await pool.query(`
       DO $$
       BEGIN
