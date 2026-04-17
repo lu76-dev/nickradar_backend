@@ -223,24 +223,25 @@ function formatEventId(id) {
   return 'EV-' + String(id).padStart(8, '0');
 }
 
-function calcPrice(count) {
-  if (count >= 5000) return count * 0.40;
-  if (count >= 2000) return count * 0.50;
-  if (count >= 1000) return count * 0.60;
-  if (count >= 500)  return count * 0.70;
-  if (count >= 200)  return count * 0.80;
-  if (count >= 100)  return count * 0.90;
-  return count * 1.00;
-}
+const PRICING_TIERS = [
+  { min: 5000, unit: 0.90 },
+  { min: 1000, unit: 1.00 },
+  { min: 500,  unit: 1.10 },
+  { min: 200,  unit: 1.20 },
+  { min: 100,  unit: 1.30 },
+  { min: 12,   unit: 1.50 },
+];
+const STICKER_MINIMUM = 12;
 
 function unitPrice(count) {
-  if (count >= 5000) return 0.40;
-  if (count >= 2000) return 0.50;
-  if (count >= 1000) return 0.60;
-  if (count >= 500)  return 0.70;
-  if (count >= 200)  return 0.80;
-  if (count >= 100)  return 0.90;
-  return 1.00;
+  for (const tier of PRICING_TIERS) {
+    if (count >= tier.min) return tier.unit;
+  }
+  return 1.50;
+}
+
+function calcPrice(count) {
+  return count * unitPrice(count);
 }
 
 async function generateUniqueCodes(eventId, count) {
@@ -272,6 +273,14 @@ async function bulkInsertStickers(eventId, nicknames, codes) {
     [eventIds, nicknames, codes, statuses]
   );
 }
+
+// ============================================================
+// PRICING (public)
+// ============================================================
+
+app.get('/api/pricing', (req, res) => {
+  res.json({ success: true, tiers: PRICING_TIERS, minimum: STICKER_MINIMUM });
+});
 
 // ============================================================
 // EVENT ADMIN AUTH
@@ -447,7 +456,7 @@ app.post('/api/events', requireEventAdminAuth, async (req, res) => {
     return res.status(400).json({ success: false, error: 'terms acceptance required' });
   }
   const count = parseInt(sticker_count);
-  if (count < 24) return res.status(400).json({ success: false, error: 'minimum 24 stickers' });
+  if (count < STICKER_MINIMUM) return res.status(400).json({ success: false, error: `minimum ${STICKER_MINIMUM} stickers` });
   if (count > 10000) return res.status(400).json({ success: false, error: 'maximum 10000 stickers' });
 
   const tz = timezone || 'Europe/Vienna';
