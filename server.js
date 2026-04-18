@@ -876,8 +876,21 @@ app.post('/api/participant/login', codeLimiter, async (req, res) => {
     if (new Date(sticker.ends_at) < new Date()) return res.status(403).json({ success: false, error: 'event has ended' });
     if (sticker.status === 'invalidated') return res.status(403).json({ success: false, error: 'sticker invalidated, please get a new one' });
     if (sticker.status === 'deactivated') return res.status(403).json({ success: false, error: 'access deactivated by event admin' });
-    const activeSession = await pool.query('SELECT id FROM session WHERE sticker_id = $1 AND expires_at > NOW()', [sticker.id]);
-    if (activeSession.rows.length > 0) return res.status(403).json({ success: false, error: 'already active on another device' });
+    const activeSession = await pool.query(
+      'SELECT id FROM session WHERE sticker_id = $1 AND expires_at > NOW()',
+      [sticker.id]
+    );
+    if (activeSession.rows.length > 0) {
+      const staleSession = await pool.query(
+        'SELECT id FROM session WHERE sticker_id = $1 AND expires_at > NOW() AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL \'30 seconds\')',
+        [sticker.id]
+      );
+      if (staleSession.rows.length > 0) {
+        await pool.query('DELETE FROM session WHERE sticker_id = $1', [sticker.id]);
+      } else {
+        return res.status(403).json({ success: false, error: 'already active on another device' });
+      }
+    }
     const token = crypto.randomBytes(32).toString('hex');
     await pool.query(
       `INSERT INTO session (sticker_id, event_id, token, created_at, expires_at, last_seen_at, ip_address) VALUES ($1, $2, $3, NOW(), $4, NOW(), $5)`,
